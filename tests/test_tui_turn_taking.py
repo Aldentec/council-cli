@@ -1,5 +1,6 @@
-from council.models import AgentConfig, CouncilFile, ProjectConfig
-from council.orchestrator import MeetingOrchestrator
+from council.application.meeting_session import MeetingSession
+from council.domain.models.agent import AgentConfig
+from council.domain.models.config import CouncilFile, ProjectConfig
 
 
 def _council() -> CouncilFile:
@@ -15,16 +16,16 @@ def _council() -> CouncilFile:
 
 
 def test_direct_address_limits_first_response_to_target_agent():
-    orchestrator = MeetingOrchestrator(_council(), "briefing")
+    session = MeetingSession(_council(), "briefing")
 
-    ordered = orchestrator._ordered_agents("Jordan, what do you think about iOS vs Android?")
+    ordered = session._ordered_agents("Jordan, what do you think about iOS vs Android?")
 
     assert [agent.name for agent in ordered] == ["Jordan"]
 
 
 def test_general_prompt_keeps_full_room_in_rotation():
-    orchestrator = MeetingOrchestrator(_council(), "briefing")
+    session = MeetingSession(_council(), "briefing")
 
-    ordered = orchestrator._ordered_agents("What does the room think about iOS vs Android?")
+    ordered = session._ordered_agents("What does everyone think about iOS vs Android?")
 
     assert [agent.name for agent in ordered] == ["Alex", "Jordan", "Sam", "Morgan"]

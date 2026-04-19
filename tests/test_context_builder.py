@@ -1,8 +1,8 @@
 from pathlib import Path
 from uuid import uuid4
 
-from council.context import ContextBuilder
-from council.models import ContextConfig, CouncilFile, ProjectConfig
+from council.domain.models.config import ContextConfig, CouncilFile, ProjectConfig
+from council.infrastructure.context.builder import ContextBuilder
 
 
 def test_context_builder_summarizes_and_caches(tmp_path: Path):

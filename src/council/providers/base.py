@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from typing import Generator, Protocol, runtime_checkable
 
-from council.models import AgentConfig, CouncilFile
+from council.domain.models.agent import AgentConfig
+from council.domain.models.config import CouncilFile
 
 
 @runtime_checkable

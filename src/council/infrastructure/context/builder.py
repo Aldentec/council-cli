@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import fnmatch
 import hashlib
-import json
-from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Callable, Optional
 
-from council.models import CouncilFile, cache_dir
+from council.domain.models.config import CouncilFile
+from council.infrastructure.context.cache import ContextBuildResult, ContextCache
+from council.infrastructure.teams.store import cache_dir
 
 ALLOWED_SUFFIXES = {".md", ".txt", ".yaml", ".yml", ".json", ".toml", ".rst"}
 ALLOWED_NAMES = {".env.example"}
@@ -38,17 +38,6 @@ PRIORITY_KEYWORDS = [
 MAX_FILE_SIZE = 50 * 1024
 
 
-@dataclass
-class ContextBuildResult:
-    content: str
-    included_files: list[str] = field(default_factory=list)
-    summarized_files: list[str] = field(default_factory=list)
-    dropped_files: list[str] = field(default_factory=list)
-    tokens_estimated: int = 0
-    cache_status: str = "MISS"
-    cache_path: str = ""
-
-
 class ContextBuilder:
     def __init__(
         self,
@@ -61,7 +50,7 @@ class ContextBuilder:
         self.workspace = Path(workspace).resolve()
         self.summarizer = summarizer or self._fallback_summary
         self.on_progress = on_progress
-        self._cache_dir = cache_dir()
+        self._cache = ContextCache(cache_dir())
 
     @staticmethod
     def estimate_tokens(text: str) -> int:
@@ -70,27 +59,16 @@ class ContextBuilder:
     def build(self) -> ContextBuildResult:
         gathered = self._gather_files()
         digest = hashlib.md5()
-        # Include summarizer identity so switching providers/models busts the cache
         summarizer_id = f"{self.council.providers.default_provider}:{self.council.providers.ollama_default_model}"
         digest.update(summarizer_id.encode("utf-8"))
         for path, content in gathered:
             digest.update(self._display_path(path).encode("utf-8"))
             digest.update(content.encode("utf-8", errors="ignore"))
         cache_key = digest.hexdigest()
-        cache_text = self._cache_dir / f"{cache_key}.txt"
-        cache_meta = self._cache_dir / f"{cache_key}.json"
 
-        if cache_text.exists() and cache_meta.exists():
-            meta = json.loads(cache_meta.read_text(encoding="utf-8"))
-            return ContextBuildResult(
-                content=cache_text.read_text(encoding="utf-8"),
-                included_files=meta.get("included_files", []),
-                summarized_files=meta.get("summarized_files", []),
-                dropped_files=meta.get("dropped_files", []),
-                tokens_estimated=meta.get("tokens_estimated", 0),
-                cache_status="HIT",
-                cache_path=str(cache_text),
-            )
+        cached = self._cache.get(cache_key)
+        if cached is not None:
+            return cached
 
         sorted_gathered = sorted(gathered, key=lambda item: self._priority_score(item[0]))
         total = len(sorted_gathered)
@@ -130,6 +108,7 @@ class ContextBuilder:
                 summarized_files.append(display_path)
 
         compiled = "\n".join(parts).strip() or "No eligible project context was found."
+        cache_text_path = self._cache._dir / f"{cache_key}.txt"
         result = ContextBuildResult(
             content=compiled,
             included_files=included_files,
@@ -137,11 +116,9 @@ class ContextBuilder:
             dropped_files=dropped_files,
             tokens_estimated=self.estimate_tokens(compiled),
             cache_status="MISS",
-            cache_path=str(cache_text),
+            cache_path=str(cache_text_path),
         )
-
-        cache_text.write_text(compiled, encoding="utf-8")
-        cache_meta.write_text(json.dumps(asdict(result), indent=2), encoding="utf-8")
+        self._cache.put(cache_key, result)
         return result
 
     def _gather_files(self) -> list[tuple[Path, str]]:

@@ -3,7 +3,9 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from council.cli import app
-from council.models import AgentConfig, CouncilFile, ProjectConfig, save_council_file
+from council.domain.models.agent import AgentConfig
+from council.domain.models.config import CouncilFile, ProjectConfig
+from council.infrastructure.config.loader import save_council_file
 
 runner = CliRunner()
 

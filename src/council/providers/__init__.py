@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from council.providers.anthropic_provider import AnthropicProvider
+from council.providers.anthropic.provider import AnthropicProvider
 from council.providers.base import LLMProvider
-from council.providers.ollama_provider import OllamaProvider
+from council.providers.ollama.provider import OllamaProvider
 
 
 def detect_provider(model: str, explicit: str | None = None) -> str:

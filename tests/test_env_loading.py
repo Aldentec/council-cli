@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 
-from council.env_utils import load_council_env
+from council.infrastructure.config.env import load_council_env
 
 
 def test_load_council_env_reads_local_dotenv(tmp_path: Path, monkeypatch):

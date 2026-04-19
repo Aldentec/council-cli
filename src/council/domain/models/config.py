@@ -1,20 +1,11 @@
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Literal
-
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, Field, field_validator
 
-DEFAULT_IGNORES = ["tests/", "migrations/", "node_modules/"]
-DEFAULT_COLORS = [
-    "#C9A227",
-    "#4A90E2",
-    "#D97B66",
-    "#6ABF9F",
-    "#B084F5",
-    "#E8B86D",
-]
+from council.domain.models.agent import AgentConfig
+from council.shared.constants import DEFAULT_COLORS, DEFAULT_IGNORES
+from council.shared.types import ConversationStyle
 
 
 class ProjectConfig(BaseModel):
@@ -52,23 +43,13 @@ class TemplateConfig(BaseModel):
     tags: list[str] = Field(default_factory=list)
 
 
-class AgentConfig(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-    name: str
-    role: str
-    persona: str
-    system_prompt: str
-    model: str = "llama3.2"
-    provider: str | None = None  # None = auto-detect: claude-* → anthropic, else → ollama
-    color: str = "#C9A227"
-
-
 class SettingsConfig(BaseModel):
     max_turns: int = 10
     sequential: bool = True
     user_can_interject: bool = True
-    conversation_style: Literal["collaborative", "debate", "socratic"] = "collaborative"
+    conversation_style: ConversationStyle = "collaborative"
+    persist_sessions: bool = False
+    max_sessions_loaded: int = 3
 
 
 class ProvidersConfig(BaseModel):
@@ -104,30 +85,3 @@ class TemplateRoster(BaseModel):
     name: str
     tags: list[str] = Field(default_factory=list)
     agents: list[AgentConfig] = Field(default_factory=list)
-
-
-def load_council_file(path: str | Path = "council.yaml") -> CouncilFile:
-    path = Path(path)
-    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    council = CouncilFile.model_validate(data)
-    council.assign_missing_colors()
-    return council
-
-
-def save_council_file(council: CouncilFile, path: str | Path = "council.yaml") -> Path:
-    path = Path(path)
-    council.assign_missing_colors()
-    path.write_text(council.to_yaml(), encoding="utf-8")
-    return path
-
-
-def teams_dir() -> Path:
-    directory = Path.home() / ".council" / "teams"
-    directory.mkdir(parents=True, exist_ok=True)
-    return directory
-
-
-def cache_dir() -> Path:
-    directory = Path.home() / ".council" / "cache"
-    directory.mkdir(parents=True, exist_ok=True)
-    return directory

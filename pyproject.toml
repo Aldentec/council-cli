@@ -40,7 +40,7 @@ include-package-data = true
 where = ["src"]
 
 [tool.setuptools.package-data]
-council = ["ui/*", "templates/*.yaml"]
+council = ["ui/*.html", "ui/*.css", "templates/*.yaml"]
 
 [tool.pytest.ini_options]
 addopts = "-q"

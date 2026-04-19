@@ -9,26 +9,35 @@ from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
-from council.context import ContextBuildResult
-from council.models import CouncilFile
-from council.orchestrator import CouncilAI, MeetingOrchestrator
+from council.application.council_service import CouncilService
+from council.application.meeting_session import MeetingSession
+from council.domain.models.config import CouncilFile
+from council.infrastructure.context.cache import ContextBuildResult
+from council.infrastructure.sessions.store import SavedSession, SessionStore
 
-UI_DIR = Path(__file__).resolve().parent / "ui"
+# council/ui/ — where index.html and styles.css live
+UI_DIR = Path(__file__).resolve().parent.parent
 TEMPLATES = Environment(
     loader=FileSystemLoader(str(UI_DIR)),
     autoescape=select_autoescape(["html", "xml"]),
 )
 
 
-def create_app(council: CouncilFile, context_result: ContextBuildResult) -> FastAPI:
+def create_app(
+    council: CouncilFile,
+    context_result: ContextBuildResult,
+    workspace: Path | None = None,
+) -> FastAPI:
     app = FastAPI(title="Council", version="0.1.0")
     queue: asyncio.Queue[str] = asyncio.Queue()
-    orchestrator = MeetingOrchestrator(council, context_result.content, CouncilAI(council))
+    service = CouncilService(council)
+    session = MeetingSession(council, context_result.content, service)
+    cwd = workspace or Path.cwd()
 
     app.state.council = council
     app.state.context_result = context_result
     app.state.queue = queue
-    app.state.orchestrator = orchestrator
+    app.state.session = session
     app.mount("/static", StaticFiles(directory=str(UI_DIR)), name="static")
 
     @app.get("/", response_class=HTMLResponse)
@@ -61,12 +70,24 @@ def create_app(council: CouncilFile, context_result: ContextBuildResult) -> Fast
         clean = message.strip()
         if not clean:
             return HTMLResponse("")
-        asyncio.create_task(orchestrator.queue_round(clean, queue))
-        return HTMLResponse(orchestrator.user_html(clean))
+        asyncio.create_task(session.queue_round(clean, queue))
+        return HTMLResponse(session.user_html(clean))
 
     @app.post("/meeting/end", response_class=HTMLResponse)
     async def end_meeting() -> HTMLResponse:
-        summary_markdown = orchestrator.end_meeting()
+        summary_markdown = session.end_meeting()
+        if council.settings.persist_sessions and session.history:
+            user_turns = [h for h in session.history if h.get("speaker") == "You"]
+            if user_turns:
+                saved = SavedSession(
+                    session_id=session.session_id,
+                    started_at=session.started_at,
+                    project_name=council.project.name,
+                    history=session.history,
+                    summary=summary_markdown,
+                    turn_count=len(user_turns),
+                )
+                SessionStore(cwd).save(saved)
         summary_html = markdown.markdown(summary_markdown, extensions=["extra", "tables", "sane_lists"])
         card = (
             '<section class="summary-card">'

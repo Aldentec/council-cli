@@ -1,6 +1,7 @@
-from council.models import AgentConfig, CouncilFile, ProjectConfig
-from council.orchestrator import MeetingOrchestrator
-from council.providers.anthropic_provider import AnthropicProvider
+from council.application.meeting_session import MeetingSession
+from council.domain.models.agent import AgentConfig
+from council.domain.models.config import CouncilFile, ProjectConfig
+from council.providers.anthropic.provider import AnthropicProvider
 
 
 def _council() -> CouncilFile:
@@ -17,16 +18,14 @@ def _council() -> CouncilFile:
 def test_model_aliases_are_normalized_for_api_calls():
     provider = AnthropicProvider()
 
-    # Legacy shorthand aliases should resolve to canonical versioned IDs
     assert provider._model_name("claude-sonnet-4-6") != "claude-sonnet-4-6"
     assert provider._model_name("claude-3-5-haiku-latest") == "claude-haiku-4-5-20251001"
-    # Canonical versioned IDs should pass through unchanged
     assert provider._model_name("claude-haiku-4-5-20251001") == "claude-haiku-4-5-20251001"
 
 
 def test_directly_addressed_agent_speaks_first():
-    orchestrator = MeetingOrchestrator(_council(), "briefing")
+    session = MeetingSession(_council(), "briefing")
 
-    ordered = orchestrator._ordered_agents("Jordan, what do you think about iOS vs Android?")
+    ordered = session._ordered_agents("Jordan, what do you think about iOS vs Android?")
 
     assert ordered[0].name == "Jordan"

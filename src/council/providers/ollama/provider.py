@@ -6,7 +6,9 @@ from typing import Generator
 
 import httpx
 
-from council.models import AgentConfig, CouncilFile
+from council.domain.models.agent import AgentConfig
+from council.domain.models.config import CouncilFile
+from council.providers.utils import build_system_prompt, fallback_meeting_summary, history_to_text
 
 OLLAMA_FALLBACK_MODELS = ["llama3.2", "llama3.1", "mistral", "phi3", "gemma2"]
 
@@ -102,8 +104,8 @@ class OllamaProvider:
         shared_context: str,
         history: list[dict],
     ) -> Generator[str, None, None]:
-        system = self._build_system_prompt(agent, council, shared_context)
-        transcript = self._history_to_text(history)
+        system = build_system_prompt(agent, council, shared_context)
+        transcript = history_to_text(history)
         latest_user = next(
             (item["content"] for item in reversed(history) if item.get("speaker") == "You"), ""
         )
@@ -137,7 +139,7 @@ class OllamaProvider:
                         break
 
     def summarize_meeting(self, council: CouncilFile, history: list[dict]) -> str:
-        transcript = self._history_to_text(history)
+        transcript = history_to_text(history)
         prompt = (
             "Summarize this meeting in structured Markdown with these sections: "
             "Key points discussed, Decisions reached, Action items, Dissenting opinions, Open questions.\n\n"
@@ -146,25 +148,4 @@ class OllamaProvider:
         try:
             return self._chat(self._default_model, [{"role": "user", "content": prompt}], max_tokens=800)
         except Exception:
-            from council.providers.anthropic_provider import _fallback_summary
-            return _fallback_summary(council, history)
-
-    def _history_to_text(self, history: list[dict]) -> str:
-        lines = []
-        for item in history:
-            speaker = item.get("speaker", "Unknown")
-            role = item.get("role", "")
-            prefix = f"[{speaker} — {role}]" if role else f"[{speaker}]"
-            lines.append(f"{prefix}: {item.get('content', '')}")
-        return "\n".join(lines)
-
-    def _build_system_prompt(self, agent: AgentConfig, council: CouncilFile, shared_context: str) -> str:
-        return (
-            f"{agent.system_prompt}\n\n"
-            f"Conversation style: {council.settings.conversation_style}. "
-            "You are in a live meeting. Speak in 2-3 sentences only — never more. "
-            "No bullet points, no numbered lists, no bold headers, no section titles. "
-            "Plain spoken sentences only. Make one concrete point and stop.\n\n"
-            "## Project Briefing\n"
-            f"{shared_context}"
-        )
+            return fallback_meeting_summary(council, history)
