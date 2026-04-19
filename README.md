@@ -220,11 +220,22 @@ You > /end
   [Summary generated — key points, decisions, action items, open questions]
 ```
 
-**Mentions:** Name an agent to have them speak first. Ask a direct question to one agent and only they respond.
-
 **Commands during a session:**
 - `/end` or `/summary` — generate a structured meeting summary
 - `/quit` — exit the room
+
+### How Council decides who speaks
+
+Not every advisor responds to every message. Council uses a speaker selection algorithm to route each message to the 1–2 most relevant advisors, then rotates naturally so no single voice dominates.
+
+**The rules, in order:**
+
+1. **All-room cues** — if your message contains "everyone", "all of you", "the whole room", or similar, every advisor responds.
+2. **Direct address** — if you name exactly one advisor and ask a direct question ("Jordan, what's your take?"), only they respond.
+3. **Two-person teams** — if there are only two advisors, both always respond.
+4. **Relevance + rotation** — otherwise, Council scores each advisor by how well their role and persona match the topic of your message (keyword overlap, stop words removed). Advisors who spoke recently receive a small penalty that fades after ~5 turns. The top 2 scorers respond.
+
+**In practice:** ask about engineering risk and the CTO responds. Ask about pricing and the CFO and CEO respond. Send a few messages and the room rotates naturally without you having to direct traffic.
 
 ---
 

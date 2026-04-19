@@ -65,6 +65,8 @@ def run_tui(council: CouncilFile, result: ContextBuildResult, api_status: tuple[
             message = console.input("\n[bold #C9A227]You[/bold #C9A227] > ").strip()
         except (EOFError, KeyboardInterrupt):
             console.print("\n[#8B8680]Meeting closed.[/#8B8680]")
+            if orchestrator.history:
+                console.print("[#8B8680]Run [bold]/end[/bold] next time, or type [bold]/summary[/bold] to get your meeting notes.[/#8B8680]")
             break
 
         if not message:

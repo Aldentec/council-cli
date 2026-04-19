@@ -59,7 +59,12 @@ def start_server(
         ai = AnthropicFacade()
 
         status.update("[#8B8680]Scanning project context...[/#8B8680]")
-        context_result = ContextBuilder(council, Path.cwd(), summarizer=ai.summarize_file).build()
+        context_result = ContextBuilder(
+            council,
+            Path.cwd(),
+            summarizer=ai.summarize_file,
+            on_progress=lambda msg: status.update(f"[#8B8680]{msg}[/#8B8680]"),
+        ).build()
 
         status.update("[#8B8680]Checking API connection...[/#8B8680]")
         api_status = ai.ping()
@@ -96,6 +101,44 @@ def list() -> None:
     for agent in council.agents:
         table.add_row(agent.name, agent.role, agent.model, agent.persona)
     console.print(table)
+
+
+@app.command("context")
+def show_context() -> None:
+    """Show which files and folders are included in the project context."""
+    load_council_env(Path.cwd())
+    config_path = _require_config()
+    council = load_council_file(config_path)
+
+    with console.status("[#8B8680]Scanning project context...[/#8B8680]", spinner="dots") as status:
+        result = ContextBuilder(
+            council,
+            Path.cwd(),
+            on_progress=lambda msg: status.update(f"[#8B8680]{msg}[/#8B8680]"),
+        ).build()
+
+    dirs = council.context.directories or ["."]
+    console.print(f"\n[bold #C9A227]Scanned directories:[/bold #C9A227] {', '.join(dirs)}")
+    ignore = council.context.ignore
+    if ignore:
+        console.print(f"[dim]Ignored patterns:[/dim] {', '.join(ignore)}")
+    console.print(f"[dim]Cache:[/dim] {result.cache_status}\n")
+
+    if result.included_files:
+        table = Table(title="Included Files", header_style="bold #6ABF9F", show_lines=False)
+        table.add_column("File")
+        table.add_column("Note", style="dim")
+        for f in result.included_files:
+            note = "summarized" if f in result.summarized_files else ""
+            table.add_row(f, note)
+        console.print(table)
+
+    if result.dropped_files:
+        console.print(f"\n[dim]Dropped (over token budget):[/dim]")
+        for f in result.dropped_files:
+            console.print(f"  [dim]- {f}[/dim]")
+
+    console.print(f"\n[dim]Estimated tokens:[/dim] {result.tokens_estimated} / {council.context.max_tokens}")
 
 
 @app.command("import")

@@ -5,7 +5,7 @@ import hashlib
 import json
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Optional
 
 from council.models import CouncilFile, cache_dir
 
@@ -55,10 +55,12 @@ class ContextBuilder:
         council: CouncilFile,
         workspace: str | Path,
         summarizer: Callable[[str, str], str] | None = None,
+        on_progress: Optional[Callable[[str], None]] = None,
     ) -> None:
         self.council = council
         self.workspace = Path(workspace).resolve()
         self.summarizer = summarizer or self._fallback_summary
+        self.on_progress = on_progress
         self._cache_dir = cache_dir()
 
     @staticmethod
@@ -87,12 +89,18 @@ class ContextBuilder:
                 cache_path=str(cache_text),
             )
 
+        sorted_gathered = sorted(gathered, key=lambda item: self._priority_score(item[0]))
+        total = len(sorted_gathered)
         processed: list[tuple[str, str, int, bool]] = []
-        for path, content in sorted(gathered, key=lambda item: self._priority_score(item[0])):
+        for i, (path, content) in enumerate(sorted_gathered, 1):
             display_path = self._display_path(path)
+            if self.on_progress:
+                self.on_progress(f"Scanning project context... ({i}/{total}) {display_path}")
             rendered = content
             summarized = False
             if self.estimate_tokens(content) > self.council.context.summarize_threshold:
+                if self.on_progress:
+                    self.on_progress(f"Summarizing ({i}/{total}) {display_path}")
                 rendered = self.summarizer(display_path, content)
                 summarized = True
             processed.append((display_path, rendered.strip(), self.estimate_tokens(rendered), summarized))

@@ -3,12 +3,104 @@ from __future__ import annotations
 import asyncio
 import html
 import os
+import re
 import time
 from dataclasses import dataclass
 from typing import Any, Generator
 from uuid import uuid4
 
 from council.models import AgentConfig, CouncilFile
+
+_STOP_WORDS = frozenset({
+    "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
+    "have", "has", "had", "do", "does", "did", "will", "would", "could",
+    "should", "may", "might", "can", "to", "of", "in", "on", "at", "for",
+    "with", "by", "from", "and", "or", "but", "not", "this", "that",
+    "it", "i", "we", "you", "he", "she", "they", "what", "how", "why",
+    "when", "where", "who", "which", "think", "about", "our", "your",
+    "my", "their", "us", "me", "him", "her", "just", "so", "if", "as",
+})
+
+_ALL_ROOM_CUES = ["everyone", "everybody", "all of you", "whole room", "all advisors"]
+_DIRECT_CUES = ["what do you think", "thoughts", "do you agree", "weigh in", "tell me", "your take", "your view"]
+_FOLLOWUP_CUES = [
+    "elaborate", "explain", "what do you mean", "tell me more", "go on",
+    "can you", "you said", "you mentioned", "expand on", "how so",
+    "say more", "why is that", "what about that", "be more specific",
+]
+
+# Maps substrings found in an agent's role → topic keywords that should boost that role.
+# Bridges the gap when message vocabulary differs from persona vocabulary
+# (e.g. "paid ads" won't match "finance" lexically, but the affinity map connects them).
+_ROLE_AFFINITIES: list[tuple[frozenset[str], frozenset[str]]] = [
+    (
+        frozenset({"cfo", "finance", "financial", "treasurer"}),
+        frozenset({"cost", "spend", "budget", "revenue", "profit", "money", "pay", "paid",
+                   "price", "pricing", "roi", "cac", "ltv", "advertising", "ads", "ad",
+                   "burn", "cash", "margin", "economics", "investment", "expense"}),
+    ),
+    (
+        frozenset({"cto", "technical", "engineer", "engineering", "architect"}),
+        frozenset({"code", "technical", "api", "database", "performance", "security",
+                   "infrastructure", "deploy", "build", "system", "software", "backend",
+                   "frontend", "stack", "latency", "scalability", "refactor"}),
+    ),
+    (
+        frozenset({"ceo", "founder", "chief executive", "president", "director"}),
+        frozenset({"strategy", "growth", "market", "vision", "product", "customer",
+                   "brand", "launch", "scale", "investor", "fundraise", "narrative"}),
+    ),
+    (
+        frozenset({"marketing", "growth", "brand", "demand"}),
+        frozenset({"campaign", "brand", "audience", "conversion", "funnel", "ads",
+                   "advertising", "content", "social", "seo", "traffic", "creative",
+                   "copy", "messaging", "channel", "engagement", "retention"}),
+    ),
+    (
+        frozenset({"legal", "compliance", "risk", "counsel"}),
+        frozenset({"legal", "law", "compliance", "risk", "liability", "contract",
+                   "regulation", "privacy", "gdpr", "terms", "policy"}),
+    ),
+    (
+        frozenset({"devil", "skeptic", "critic", "advocate"}),
+        frozenset({"risk", "wrong", "fail", "problem", "issue", "challenge",
+                   "concern", "assumption", "flaw", "downside", "worst"}),
+    ),
+    (
+        frozenset({"design", "designer", "ux", "ui", "creative", "art"}),
+        frozenset({"design", "ux", "visual", "interface", "aesthetic", "color",
+                   "layout", "typography", "user", "experience", "branding"}),
+    ),
+    (
+        frozenset({"product", "pm", "manager"}),
+        frozenset({"feature", "roadmap", "requirement", "feedback", "sprint",
+                   "backlog", "priority", "scope", "milestone", "user story"}),
+    ),
+]
+
+
+def _tokenize(text: str) -> set[str]:
+    words = re.findall(r"[a-z]+", text.lower())
+    return {w for w in words if w not in _STOP_WORDS and len(w) > 2}
+
+
+def _score_relevance(message: str, agent: AgentConfig) -> float:
+    msg_tokens = _tokenize(message)
+    agent_tokens = _tokenize(f"{agent.role} {agent.name} {agent.persona}")
+    if not msg_tokens:
+        return 0.0
+    return len(msg_tokens & agent_tokens) / len(msg_tokens)
+
+
+def _affinity_boost(message: str, agent: AgentConfig) -> float:
+    role_lower = agent.role.lower()
+    msg_tokens = _tokenize(message)
+    for role_keys, topic_keys in _ROLE_AFFINITIES:
+        if any(k in role_lower for k in role_keys):
+            overlap = msg_tokens & topic_keys
+            if overlap:
+                return min(0.4, 0.15 + len(overlap) * 0.05)
+    return 0.0
 
 try:
     from anthropic import Anthropic
@@ -129,6 +221,7 @@ class AnthropicFacade:
                 response = self.client.messages.create(
                     model=self._model_name("", small=True),
                     max_tokens=450,
+                    timeout=15.0,
                     messages=[{"role": "user", "content": prompt}],
                 )
                 text = _extract_text(response)
@@ -155,7 +248,7 @@ class AnthropicFacade:
             try:
                 with self.client.messages.stream(
                     model=self._model_name(agent.model),
-                    max_tokens=300,
+                    max_tokens=120,
                     system=system,
                     messages=[
                         {
@@ -163,8 +256,8 @@ class AnthropicFacade:
                             "content": (
                                 f"Latest user question: {latest_user or 'The meeting is just beginning.'}\n\n"
                                 f"Meeting transcript so far:\n{transcript or 'No prior discussion yet.'}\n\n"
-                                f"Respond only as {agent.name}, the {agent.role}. Add a distinct perspective, "
-                                "build on prior speakers when useful, and avoid repeating generic advice."
+                                f"Respond only as {agent.name}, the {agent.role}. One sharp point. "
+                                "Build on what was just said if useful. No lists, no headers, no preamble."
                             ),
                         }
                     ],
@@ -232,8 +325,9 @@ class AnthropicFacade:
         return (
             f"{agent.system_prompt}\n\n"
             f"Conversation style: {council.settings.conversation_style}. "
-            "This is a meeting, not a coding task. Be incisive, grounded, and decision-oriented. "
-            "Keep responses to 2-3 sentences maximum — sharp and direct, no preamble or filler.\n\n"
+            "You are in a live meeting. Speak in 2-3 sentences only — never more. "
+            "No bullet points, no numbered lists, no bold headers, no section titles. "
+            "Plain spoken sentences only. Make one concrete point and stop.\n\n"
             "## Project Briefing\n"
             f"{shared_context}"
         )
@@ -333,25 +427,126 @@ class MeetingOrchestrator:
             '</div>'
         )
 
+    def _last_agent(self) -> AgentConfig | None:
+        for item in reversed(self.history):
+            speaker = item.get("speaker")
+            if speaker and speaker != "You":
+                return next((a for a in self.council.agents if a.name == speaker), None)
+        return None
+
+    def _followup_agent(self, user_message: str) -> AgentConfig | None:
+        """Return the agent being followed up, by matching message tokens against recent responses."""
+        msg_tokens = _tokenize(user_message)
+        text = user_message.lower()
+
+        # Explicit cues or very short messages → last speaker, no content analysis needed
+        if len(msg_tokens) <= 2 or any(cue in text for cue in _FOLLOWUP_CUES):
+            return self._last_agent()
+
+        # Find the recent agent response whose content overlaps most with the user's message.
+        # Scanning in reverse ensures the most recent high-overlap agent wins.
+        best_name: str | None = None
+        best_score = 0.3  # minimum threshold to count as a follow-up
+        checked = 0
+        for item in reversed(self.history):
+            speaker = item.get("speaker")
+            if not speaker or speaker == "You":
+                continue
+            response_tokens = _tokenize(item.get("content", ""))
+            if msg_tokens and response_tokens:
+                score = len(msg_tokens & response_tokens) / len(msg_tokens)
+                if score > best_score:
+                    best_score = score
+                    best_name = speaker
+            checked += 1
+            if checked >= 6:
+                break
+
+        if best_name:
+            return next((a for a in self.council.agents if a.name == best_name), None)
+        return None
+
+    def _turns_since_spoke(self) -> dict[str, int]:
+        """Map agent name → how many user turns ago they last spoke. Absent = never."""
+        result: dict[str, int] = {}
+        turns = 0
+        for item in reversed(self.history):
+            if item.get("speaker") == "You":
+                turns += 1
+            elif item.get("speaker") not in result:
+                result[item["speaker"]] = turns
+        return result
+
     def _ordered_agents(self, user_message: str) -> list[AgentConfig]:
         text = user_message.lower()
-        mentioned = [agent for agent in self.council.agents if agent.name.lower() in text]
-        if not mentioned:
-            return list(self.council.agents)
+        agents = self.council.agents
 
-        direct_cues = [
-            "what do you think",
-            "thoughts",
-            "do you agree",
-            "can you weigh in",
-            "tell me",
-            "?",
-        ]
-        if len(mentioned) == 1 and any(cue in text for cue in direct_cues):
+        # Explicit all-room address → everyone speaks
+        if any(cue in text for cue in _ALL_ROOM_CUES):
+            return list(agents)
+
+        # Named agents in the message
+        mentioned = [a for a in agents if a.name.lower() in text]
+
+        # Direct address to exactly one named agent → only them
+        if len(mentioned) == 1 and any(cue in text for cue in _DIRECT_CUES):
             return mentioned
 
-        mentioned_names = {agent.name for agent in mentioned}
-        return mentioned + [agent for agent in self.council.agents if agent.name not in mentioned_names]
+        # Two-agent teams → both always respond
+        if len(agents) <= 2:
+            return list(agents)
+
+        # Follow-up detection: route to whoever the user is responding to
+        if not mentioned:
+            target = self._followup_agent(user_message)
+            if target:
+                return [target]
+
+        recent = self._turns_since_spoke()
+
+        # Who spoke in the immediately preceding round (for diversity enforcement)
+        last_round: set[str] = set()
+        for item in reversed(self.history):
+            if item.get("speaker") == "You":
+                break
+            speaker = item.get("speaker")
+            if speaker and speaker != "You":
+                last_round.add(speaker)
+
+        def score(agent: AgentConfig) -> float:
+            relevance = _score_relevance(user_message, agent) + _affinity_boost(user_message, agent)
+            turns_ago = recent.get(agent.name)
+            if turns_ago is None:
+                penalty = -0.2   # never spoken → small bonus
+            elif turns_ago == 1:
+                penalty = 0.35   # spoke last turn → strong suppression
+            elif turns_ago == 2:
+                penalty = 0.15   # spoke 2 turns ago → mild suppression
+            else:
+                penalty = 0.0
+            return relevance - penalty
+
+        scored = sorted(agents, key=score, reverse=True)
+
+        # How many agents cleared the relevance bar determines speaker count (1–3).
+        # Short follow-ups activate fewer agents; meaty questions activate more.
+        _THRESHOLD = 0.1
+        n_active = sum(1 for a in scored if score(a) >= _THRESHOLD)
+        limit = max(1, min(n_active, 3))
+
+        # Mentioned agents always go in first
+        mentioned_names = {a.name for a in mentioned}
+        result: list[AgentConfig] = list(mentioned)
+
+        # Fill remaining slots: fresh agents (not in last round) before stale ones
+        fresh = [a for a in scored if a.name not in mentioned_names and a.name not in last_round]
+        stale = [a for a in scored if a.name not in mentioned_names and a.name in last_round]
+        for a in fresh + stale:
+            if len(result) >= limit:
+                break
+            result.append(a)
+
+        return result
 
     async def queue_round(self, user_message: str, queue: asyncio.Queue[str]) -> None:
         async with self._lock:
