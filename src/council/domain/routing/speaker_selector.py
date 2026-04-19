@@ -4,6 +4,31 @@ import re
 
 from council.domain.models.agent import AgentConfig
 
+# Common single-character transpositions/insertions that fool exact matching.
+# Maps a normalised misspelling pattern → canonical word.
+# Only covers words that appear in ROLE_AFFINITIES topic sets.
+_FUZZY_CORRECTIONS: dict[str, str] = {}
+
+
+def _build_fuzzy_index() -> None:
+    """Populate _FUZZY_CORRECTIONS from all topic keywords in ROLE_AFFINITIES."""
+    # Imported lazily here to avoid circular import at module level.
+    # Called once after ROLE_AFFINITIES is defined.
+    for _, topic_keys in ROLE_AFFINITIES:
+        for word in topic_keys:
+            if len(word) < 4:
+                continue
+            # Allow one deletion anywhere in the word as a typo signature
+            for i in range(len(word)):
+                variant = word[:i] + word[i + 1:]
+                if variant not in _FUZZY_CORRECTIONS:
+                    _FUZZY_CORRECTIONS[variant] = word
+            # Allow one insertion (represented by checking common doubled letters)
+            for i in range(len(word)):
+                doubled = word[:i] + word[i] + word[i:]
+                if doubled not in _FUZZY_CORRECTIONS:
+                    _FUZZY_CORRECTIONS[doubled] = word
+
 _STOP_WORDS = frozenset({
     "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
     "have", "has", "had", "do", "does", "did", "will", "would", "could",
@@ -72,9 +97,16 @@ ROLE_AFFINITIES: list[tuple[frozenset[str], frozenset[str]]] = [
 ]
 
 
+def _fuzzy_normalize(word: str) -> str:
+    """Return the canonical spelling if this word looks like a known typo, else return it unchanged."""
+    if not _FUZZY_CORRECTIONS:
+        _build_fuzzy_index()
+    return _FUZZY_CORRECTIONS.get(word, word)
+
+
 def tokenize(text: str) -> set[str]:
     words = re.findall(r"[a-z]+", text.lower())
-    return {w for w in words if w not in _STOP_WORDS and len(w) > 2}
+    return {_fuzzy_normalize(w) for w in words if w not in _STOP_WORDS and len(w) > 2}
 
 
 def score_relevance(message: str, agent: AgentConfig) -> float:

@@ -20,7 +20,9 @@ def build_system_prompt(agent: AgentConfig, council: CouncilFile, shared_context
         f"Conversation style: {council.settings.conversation_style}. "
         "You are in a live meeting. Speak in 2-3 sentences only — never more. "
         "No bullet points, no numbered lists, no bold headers, no section titles. "
-        "Plain spoken sentences only. Make one concrete point and stop.\n\n"
+        "Plain spoken sentences only. Make one concrete point and stop. "
+        "If the user's message contains an obvious typo or misspelling, silently interpret "
+        "the intended word and respond to the meaning — never comment on or correct the typo.\n\n"
         "## Project Briefing\n"
         f"{shared_context}"
     )
