@@ -1,6 +1,6 @@
-# Council
+﻿# Council
 
-A CLI-first meeting room for AI advisors. Stage multi-agent conversations around your project, pressure-test decisions in real time, and get structured feedback from distinct AI personas — all from your terminal.
+A CLI-first meeting room for AI advisors. Stage multi-agent conversations around your project, pressure-test decisions in real time, and get structured feedback from distinct AI personas - all from your terminal.
 
 ```
 council start
@@ -11,20 +11,20 @@ council start
   Morgan (Devil's) > What if your top customer churns in month three?
 ```
 
-**Runs 100% locally with Ollama — no API key, no cost, no data leaving your machine.** Anthropic cloud models are also supported if you prefer.
+**Runs 100% locally with Ollama - no API key, no cost, no data leaving your machine.** Anthropic cloud models are also supported if you prefer.
 
 ---
 
 ## What it does
 
-Council reads your project files once, injects the context into every advisor, and runs a live conversation. Point it at a folder with a spec, a README, a pitch deck, or raw notes — the room sees what you see.
+Council reads your project files once, injects the context into every advisor, and runs a live conversation. Point it at a folder with a spec, a README, a pitch deck, or raw notes - the room sees what you see.
 
-- **100% local by default** — runs on Ollama with any model you have pulled
-- **6 built-in templates** — Startup Board, Engineering Review, Product Launch, Creative Agency, Debate Panel, War Room
+- **100% local by default** - runs on Ollama with any model you have pulled
+- **6 built-in templates** - Startup Board, Engineering Review, Product Launch, Creative Agency, Debate Panel, War Room
 - **Terminal UI** (default) or **browser mode** for presentations
-- **Portable config** — one `council.yaml` you can commit and share
-- **Saved teams** — switch agent rosters across projects instantly
-- **Context-aware** — scans your files, summarizes large ones, caches results
+- **Portable config** - one `council.yaml` you can commit and share
+- **Saved teams** - switch agent rosters across projects instantly
+- **Context-aware** - scans your files, summarizes large ones, caches results
 
 ---
 
@@ -65,7 +65,7 @@ pip install -e ".[anthropic]"
 
 ## Running locally with Ollama
 
-Ollama lets you run open-source LLMs on your own machine. Council defaults to Ollama — no API key needed.
+Ollama lets you run open-source LLMs on your own machine. Council defaults to Ollama - no API key needed.
 
 ### 1. Install Ollama
 
@@ -80,7 +80,7 @@ curl -fsSL https://ollama.com/install.sh | sh
 ### 2. Pull a model
 
 ```bash
-# Recommended — fast and capable for advisory conversations
+# Recommended - fast and capable for advisory conversations
 ollama pull llama3.2
 
 # Larger, more detailed responses
@@ -112,7 +112,7 @@ council init    # choose Ollama when asked
 council start
 ```
 
-That's it — your advisors are fully local.
+That's it - your advisors are fully local.
 
 ---
 
@@ -127,7 +127,7 @@ pip install "council[anthropic] @ git+https://github.com/Aldentec/council-cli.gi
 # 2. Go to any project folder
 cd my-project
 
-# 3. Run the setup wizard — choose Anthropic when asked
+# 3. Run the setup wizard - choose Anthropic when asked
 council init
 
 # 4. Add your API key to the generated .env
@@ -147,7 +147,7 @@ See [Getting an Anthropic API key](#getting-an-anthropic-api-key) below for how 
 
 | Command | Description |
 |---|---|
-| `council init` | Interactive wizard — creates `council.yaml` and `.env` |
+| `council init` | Interactive wizard - creates `council.yaml` and `.env` |
 | `council start` | Launch the terminal meeting room |
 | `council start --web` | Launch browser-based meeting room |
 | `council list` | Show all configured advisors |
@@ -188,7 +188,7 @@ council start [OPTIONS]
 
 ## Configuration
 
-Council is driven by `council.yaml` in your project root. Commit this file — it's portable.
+Council is driven by `council.yaml` in your project root. Commit this file - it's portable.
 
 ```yaml
 council_version: 1.0.0
@@ -239,7 +239,7 @@ settings:
 
 ### Mixing providers per agent
 
-Each agent can use a different model and provider. The provider is auto-detected from the model name — `claude-*` routes to Anthropic, everything else routes to Ollama.
+Each agent can use a different model and provider. The provider is auto-detected from the model name - `claude-*` routes to Anthropic, everything else routes to Ollama.
 
 ```yaml
 agents:
@@ -269,10 +269,10 @@ When you start a session, Council:
 
 1. Scans the directories and files listed in `context`
 2. Filters by type (`.md`, `.txt`, `.yaml`, `.json`, `.toml`, `.rst`) and size (max 50KB)
-3. Applies ignore patterns — `node_modules`, `.git`, `__pycache__`, `*.lock`, etc.
+3. Applies ignore patterns - `node_modules`, `.git`, `__pycache__`, `*.lock`, etc.
 4. Prioritizes files by name (README, PRD, spec, architecture rank higher)
 5. Summarizes large files via the configured model if they exceed `summarize_threshold`
-6. Caches the compiled briefing — subsequent runs are instant unless files change
+6. Caches the compiled briefing - subsequent runs are instant unless files change
 
 Cache lives in `~/.council/cache/`. Delete it to force a full re-scan.
 
@@ -307,12 +307,12 @@ You > Jordan, what's your actual recommendation?
   Jordan (CTO)  > Ship it with hard resource caps and a 30-day trial ceiling. Don't...
 
 You > /end
-  [Summary generated — key points, decisions, action items, open questions]
+  [Summary generated - key points, decisions, action items, open questions]
 ```
 
 **Commands during a session:**
-- `/end` or `/summary` — generate a structured meeting summary
-- `/quit` — exit the room
+- `/end` or `/summary` - generate a structured meeting summary
+- `/quit` - exit the room
 
 ### How Council decides who speaks
 
@@ -320,10 +320,10 @@ Not every advisor responds to every message. Council uses a speaker selection al
 
 **The rules, in order:**
 
-1. **All-room cues** — if your message contains "everyone", "all of you", "the whole room", or similar, every advisor responds.
-2. **Direct address** — if you name exactly one advisor and ask a direct question ("Jordan, what's your take?"), only they respond.
-3. **Two-person teams** — if there are only two advisors, both always respond.
-4. **Relevance + rotation** — otherwise, Council scores each advisor by how well their role and persona match the topic of your message (keyword overlap, stop words removed). Advisors who spoke recently receive a small penalty that fades after ~5 turns. The top 2 scorers respond.
+1. **All-room cues** - if your message contains "everyone", "all of you", "the whole room", or similar, every advisor responds.
+2. **Direct address** - if you name exactly one advisor and ask a direct question ("Jordan, what's your take?"), only they respond.
+3. **Two-person teams** - if there are only two advisors, both always respond.
+4. **Relevance + rotation** - otherwise, Council scores each advisor by how well their role and persona match the topic of your message (keyword overlap, stop words removed). Advisors who spoke recently receive a small penalty that fades after ~5 turns. The top 2 scorers respond.
 
 **In practice:** ask about engineering risk and the CTO responds. Ask about pricing and the CFO and CEO respond. Send a few messages and the room rotates naturally without you having to direct traffic.
 
@@ -376,16 +376,16 @@ In web mode, copy the full summary to clipboard with one click.
 
 ## Environment
 
-Council reads from a `.env` file in your project directory (or any parent directory). Generated by `council init` — never commit it.
+Council reads from a `.env` file in your project directory (or any parent directory). Generated by `council init` - never commit it.
 
 ```env
 # .env
 
-# Ollama (local — default)
+# Ollama (local - default)
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_DEFAULT_MODEL=llama3.2
 
-# Anthropic (cloud — optional)
+# Anthropic (cloud - optional)
 ANTHROPIC_API_KEY=sk-ant-...
 ```
 
@@ -399,12 +399,12 @@ Only needed if you want to use Claude cloud models.
 
 1. Go to [console.anthropic.com](https://console.anthropic.com/) and sign up or log in
 2. Open the **API Keys** section in the left sidebar
-3. Click **Create Key**, give it a name (e.g. "council"), and copy it — you won't see it again
+3. Click **Create Key**, give it a name (e.g. "council"), and copy it - you won't see it again
 4. Add some credits under **Billing** → **Add credit** (a few dollars is enough to run many sessions)
 
 Paste the key into your `.env` as `ANTHROPIC_API_KEY=sk-ant-...`
 
-> **Tip:** Your key is scoped to your account. Never commit it to git — `council init` adds `.env` to `.gitignore` automatically.
+> **Tip:** Your key is scoped to your account. Never commit it to git - `council init` adds `.env` to `.gitignore` automatically.
 
 ---
 
@@ -437,7 +437,7 @@ Key modules:
 | `models.py` | Config schema and YAML I/O |
 | `wizard.py` | Interactive init wizard |
 | `orchestrator.py` | Conversation routing and multi-provider streaming |
-| `providers/` | Provider backends — `ollama_provider.py`, `anthropic_provider.py` |
+| `providers/` | Provider backends - `ollama_provider.py`, `anthropic_provider.py` |
 | `context/` | File scanning, summarization, caching |
 | `tui.py` | Terminal UI |
 | `server.py` | FastAPI web backend |
@@ -448,3 +448,5 @@ Key modules:
 ## License
 
 MIT
+
+
