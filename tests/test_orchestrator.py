@@ -16,8 +16,11 @@ def _council() -> CouncilFile:
 def test_model_aliases_are_normalized_for_api_calls():
     ai = AnthropicFacade()
 
+    # Legacy shorthand aliases should resolve to canonical versioned IDs
     assert ai._model_name("claude-sonnet-4-6") != "claude-sonnet-4-6"
-    assert ai._model_name("claude-haiku-4-5-20251001") != "claude-haiku-4-5-20251001"
+    assert ai._model_name("claude-3-5-haiku-latest") == "claude-haiku-4-5-20251001"
+    # Canonical versioned IDs should pass through unchanged
+    assert ai._model_name("claude-haiku-4-5-20251001") == "claude-haiku-4-5-20251001"
 
 
 def test_directly_addressed_agent_speaks_first():
