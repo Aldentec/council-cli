@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Council — {{ project.name }}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Lora:wght@500;700&family=Poppins:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/styles.css" />
+    <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+    <script src="https://unpkg.com/htmx.org/dist/ext/sse.js"></script>
+</head>
+<body>
+    <div class="shell">
+        <aside class="sidebar">
+            <div>
+                <p class="eyebrow">Council</p>
+                <h1>{{ project.name }}</h1>
+                <p class="project-description">{{ project.description }}</p>
+            </div>
+
+            <section class="sidebar-card">
+                <h2>Advisors</h2>
+                <ul class="agent-list">
+                    {% for agent in agents %}
+                    <li>
+                        <span class="agent-dot" style="background: {{ agent.color }}"></span>
+                        <div>
+                            <strong>{{ agent.name }}</strong>
+                            <small>{{ agent.role }}</small>
+                        </div>
+                    </li>
+                    {% endfor %}
+                </ul>
+            </section>
+        </aside>
+
+        <main class="main-panel">
+            <div class="topbar">
+                <div>
+                    <p class="eyebrow">Meeting Room</p>
+                    <h2>Pressure-test the plan live</h2>
+                </div>
+                <button
+                    class="end-button"
+                    hx-post="/meeting/end"
+                    hx-target="#transcript"
+                    hx-swap="beforeend"
+                >
+                    End Meeting
+                </button>
+            </div>
+
+            <div id="stream-hook" hx-ext="sse" sse-connect="/meeting/stream" sse-swap="message"></div>
+            <section id="transcript" class="transcript"></section>
+
+            <form
+                class="composer"
+                hx-post="/meeting/message"
+                hx-target="#transcript"
+                hx-swap="beforeend"
+                hx-on::after-request="this.reset()"
+            >
+                <input type="text" name="message" placeholder="What should the room tackle next?" autocomplete="off" required />
+                <button type="submit">Send</button>
+            </form>
+        </main>
+    </div>
+
+    <script>
+        function copySummary() {
+            const summary = document.getElementById('meeting-summary');
+            if (!summary) return;
+            navigator.clipboard.writeText(summary.innerText);
+        }
+    </script>
+</body>
+</html>
