@@ -9,7 +9,8 @@ from dataclasses import dataclass
 from typing import Any, Generator
 from uuid import uuid4
 
-from council.models import AgentConfig, CouncilFile
+from council.models import AgentConfig, CouncilFile, ProvidersConfig
+from council.providers import LLMProvider, detect_provider, make_provider
 
 _STOP_WORDS = frozenset({
     "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
@@ -102,77 +103,39 @@ def _affinity_boost(message: str, agent: AgentConfig) -> float:
                 return min(0.4, 0.15 + len(overlap) * 0.05)
     return 0.0
 
-try:
-    from anthropic import Anthropic
-except Exception:
-    Anthropic = None
 
+class CouncilAI:
+    """Multi-provider facade: routes each agent's calls to the correct backend."""
 
-FALLBACK_MODELS = [
-    "claude-opus-4-7",
-    "claude-sonnet-4-6",
-    "claude-haiku-4-5-20251001",
-]
-
-MODEL_ALIASES = {
-    "claude-sonnet-4-6": "claude-sonnet-4-5",
-    "claude-3-5-sonnet-latest": "claude-sonnet-4-5",
-    "claude-3-5-haiku-latest": "claude-haiku-4-5-20251001",
-    "claude-haiku-4-5": "claude-haiku-4-5-20251001",
-}
-
-
-def _extract_text(response: Any) -> str:
-    texts: list[str] = []
-    for block in getattr(response, "content", []) or []:
-        if getattr(block, "type", "") == "text":
-            texts.append(getattr(block, "text", ""))
-    return "".join(texts).strip()
-
-
-class AnthropicFacade:
-    def __init__(self) -> None:
-        self.api_key = os.getenv("ANTHROPIC_API_KEY", "").strip().strip('"').strip("'")
-        self.client = Anthropic(api_key=self.api_key) if self.api_key and Anthropic else None
+    def __init__(self, council: CouncilFile | None = None) -> None:
+        cfg = council.providers if council else ProvidersConfig()
+        self._ollama_base_url = os.getenv("OLLAMA_BASE_URL", cfg.ollama_base_url)
+        self._ollama_default_model = os.getenv("OLLAMA_DEFAULT_MODEL", cfg.ollama_default_model)
+        self._default_provider_name = cfg.default_provider
+        self._cache: dict[str, LLMProvider] = {}
         self.last_error: str | None = None
-        self.last_mode = "api" if self.client else "mock"
+        self.last_mode: str = "?"
 
-    def _model_name(self, requested: str, small: bool = False) -> str:
-        model = requested or ("claude-haiku-4-5-20251001" if small else "claude-sonnet-4-5")
-        return MODEL_ALIASES.get(model, model)
+    def _get_provider(self, name: str) -> LLMProvider:
+        if name not in self._cache:
+            self._cache[name] = make_provider(
+                name,
+                ollama_base_url=self._ollama_base_url,
+                ollama_default_model=self._ollama_default_model,
+            )
+        return self._cache[name]
+
+    def _provider_for_agent(self, agent: AgentConfig) -> LLMProvider:
+        return self._get_provider(detect_provider(agent.model, agent.provider))
+
+    def _default(self) -> LLMProvider:
+        return self._get_provider(self._default_provider_name)
 
     def ping(self) -> tuple[bool, str]:
-        """Make a minimal API call to confirm connectivity. Returns (ok, display_string)."""
-        if not self.client:
-            return False, "No API key — mock mode"
-        start = time.monotonic()
-        try:
-            self.client.messages.create(
-                model=self._model_name("", small=True),
-                max_tokens=10,
-                messages=[{"role": "user", "content": "Reply with one word: ready"}],
-            )
-            ms = int((time.monotonic() - start) * 1000)
-            return True, f"Connected ({ms}ms)"
-        except Exception as exc:
-            msg = str(exc)
-            if "credit balance is too low" in msg or "credits" in msg.lower():
-                return False, "No credits — top up at console.anthropic.com"
-            if "authentication" in msg.lower() or "api_key" in msg.lower() or "401" in msg:
-                return False, "Invalid API key"
-            return False, f"Unreachable — {msg[:120]}"
+        return self._default().ping()
 
     def fetch_models(self) -> list[str]:
-        """Return available model IDs from the API, falling back to a hardcoded list."""
-        if self.client:
-            try:
-                page = self.client.models.list(limit=100)
-                ids = [m.id for m in page.data if "claude" in m.id.lower()]
-                if ids:
-                    return ids
-            except Exception:
-                pass
-        return list(FALLBACK_MODELS)
+        return self._default().fetch_models()
 
     def expand_persona(
         self,
@@ -182,157 +145,34 @@ class AnthropicFacade:
         project_name: str,
         project_description: str,
     ) -> str:
-        prompt = (
-            f"Expand this advisor persona into a rich system prompt for a meeting simulation.\n"
-            f"Project: {project_name}\n"
-            f"Description: {project_description}\n"
-            f"Advisor: {name} — {role}\n"
-            f"Short persona: {short_persona}\n\n"
-            "Return only the system prompt in plain text."
-        )
-        if self.client:
-            try:
-                response = self.client.messages.create(
-                    model=self._model_name("", small=True),
-                    max_tokens=350,
-                    messages=[{"role": "user", "content": prompt}],
-                )
-                text = _extract_text(response)
-                if text:
-                    return text
-            except Exception:
-                pass
-        return (
-            f"You are {name}, the {role} in Council's meeting room. "
-            f"Your core persona is: {short_persona}. Speak with conviction, use concrete reasoning, "
-            "challenge weak assumptions, and help the room reach a stronger decision. Stay in character, "
-            "reference the shared project briefing, and keep your contribution practical, specific, and concise."
-        )
+        return self._default().expand_persona(name, role, short_persona, project_name, project_description)
 
     def summarize_file(self, filename: str, content: str) -> str:
-        prompt = (
-            "Summarize this file for a team of AI advisors reviewing this project.\n"
-            "Preserve: key decisions, technical constraints, important facts, open questions.\n"
-            "Be concise. Do not editorialize.\n\n"
-            f"[file: {filename}]\n{content}"
-        )
-        if self.client:
-            try:
-                response = self.client.messages.create(
-                    model=self._model_name("", small=True),
-                    max_tokens=450,
-                    timeout=15.0,
-                    messages=[{"role": "user", "content": prompt}],
-                )
-                text = _extract_text(response)
-                if text:
-                    return f"[Summarized from {filename}]\n{text}"
-            except Exception:
-                pass
-        lines = [line.strip() for line in content.splitlines() if line.strip()][:10]
-        body = "\n".join(lines)
-        return f"[Summarized from {filename}]\n{body}"
+        return self._default().summarize_file(filename, content)
 
     def stream_reply(
         self,
         agent: AgentConfig,
         council: CouncilFile,
         shared_context: str,
-        history: list[dict[str, str]],
+        history: list[dict],
     ) -> Generator[str, None, None]:
-        system = self._build_system_prompt(agent, council, shared_context)
-        transcript = self._history_to_text(history)
-        latest_user = next((item["content"] for item in reversed(history) if item.get("speaker") == "You"), "")
+        provider = self._provider_for_agent(agent)
         self.last_error = None
-        if self.client:
-            try:
-                with self.client.messages.stream(
-                    model=self._model_name(agent.model),
-                    max_tokens=120,
-                    system=system,
-                    messages=[
-                        {
-                            "role": "user",
-                            "content": (
-                                f"Latest user question: {latest_user or 'The meeting is just beginning.'}\n\n"
-                                f"Meeting transcript so far:\n{transcript or 'No prior discussion yet.'}\n\n"
-                                f"Respond only as {agent.name}, the {agent.role}. One sharp point. "
-                                "Build on what was just said if useful. No lists, no headers, no preamble."
-                            ),
-                        }
-                    ],
-                ) as stream:
-                    self.last_mode = "api"
-                    for text in stream.text_stream:
-                        yield text
-                    return
-            except Exception as exc:
-                self.last_error = f"{type(exc).__name__}: {exc}"
-                self.last_mode = "mock"
+        try:
+            self.last_mode = provider.provider_name
+            yield from provider.stream_reply(agent, council, shared_context, history)
+        except Exception as exc:
+            self.last_error = f"{type(exc).__name__}: {exc}"
+            self.last_mode = "mock"
+            fallback = self._local_reply(agent, council, history)
+            for token in fallback.split():
+                yield token + " "
 
-        fallback = self._local_reply(agent, council, history)
-        for token in fallback.split():
-            yield token + " "
+    def summarize_meeting(self, council: CouncilFile, history: list[dict]) -> str:
+        return self._default().summarize_meeting(council, history)
 
-    def summarize_meeting(self, council: CouncilFile, history: list[dict[str, str]]) -> str:
-        transcript = self._history_to_text(history)
-        prompt = (
-            "Summarize this meeting in structured Markdown with these sections: "
-            "Key points discussed, Decisions reached, Action items, Dissenting opinions, Open questions.\n\n"
-            f"Project: {council.project.name}\n\n{transcript}"
-        )
-        if self.client:
-            try:
-                response = self.client.messages.create(
-                    model=self._model_name(""),
-                    max_tokens=800,
-                    messages=[{"role": "user", "content": prompt}],
-                )
-                text = _extract_text(response)
-                if text:
-                    return text
-            except Exception:
-                pass
-
-        user_points = [item["content"] for item in history if item.get("speaker") == "You"]
-        advisor_points = [item for item in history if item.get("speaker") != "You"]
-        action_item = user_points[-1] if user_points else "Clarify the top priority for the next session."
-        dissent = advisor_points[-1]["content"] if advisor_points else "No strong dissent recorded."
-        return (
-            "## Key points discussed\n"
-            f"- {council.project.description}\n"
-            f"- {len(advisor_points)} advisor contributions were recorded.\n\n"
-            "## Decisions reached\n"
-            "- The room aligned on refining the plan through structured discussion.\n\n"
-            "## Action items\n"
-            f"- Follow up on: {action_item}\n\n"
-            "## Dissenting opinions\n"
-            f"- {dissent[:240]}\n\n"
-            "## Open questions\n"
-            "- What evidence or customer signal should the team validate next?\n"
-        )
-
-    def _history_to_text(self, history: list[dict[str, str]]) -> str:
-        lines = []
-        for item in history:
-            speaker = item.get("speaker", "Unknown")
-            role = item.get("role", "")
-            prefix = f"[{speaker} — {role}]" if role else f"[{speaker}]"
-            lines.append(f"{prefix}: {item.get('content', '')}")
-        return "\n".join(lines)
-
-    def _build_system_prompt(self, agent: AgentConfig, council: CouncilFile, shared_context: str) -> str:
-        return (
-            f"{agent.system_prompt}\n\n"
-            f"Conversation style: {council.settings.conversation_style}. "
-            "You are in a live meeting. Speak in 2-3 sentences only — never more. "
-            "No bullet points, no numbered lists, no bold headers, no section titles. "
-            "Plain spoken sentences only. Make one concrete point and stop.\n\n"
-            "## Project Briefing\n"
-            f"{shared_context}"
-        )
-
-    def _local_reply(self, agent: AgentConfig, council: CouncilFile, history: list[dict[str, str]]) -> str:
+    def _local_reply(self, agent: AgentConfig, council: CouncilFile, history: list[dict]) -> str:
         latest_user = next((item["content"] for item in reversed(history) if item.get("speaker") == "You"), "the current plan")
         latest_lower = latest_user.lower()
         role = agent.role.lower()
@@ -399,17 +239,21 @@ class AnthropicFacade:
         return f"{lead}My view is to sharpen the trade-off, pick one concrete next action, and turn the discussion into a decision rather than a loop."
 
 
+# Backward-compatible alias
+AnthropicFacade = CouncilAI
+
+
 @dataclass
 class MeetingOrchestrator:
     council: CouncilFile
     shared_context: str
-    ai: AnthropicFacade
-    history: list[dict[str, str]]
+    ai: CouncilAI
+    history: list[dict]
 
-    def __init__(self, council: CouncilFile, shared_context: str, ai: AnthropicFacade | None = None) -> None:
+    def __init__(self, council: CouncilFile, shared_context: str, ai: CouncilAI | None = None) -> None:
         self.council = council
         self.shared_context = shared_context
-        self.ai = ai or AnthropicFacade()
+        self.ai = ai or CouncilAI(council)
         self.history = []
         self._lock = asyncio.Lock()
 
@@ -531,6 +375,10 @@ class MeetingOrchestrator:
         # How many agents cleared the relevance bar determines speaker count (1–3).
         # Short follow-ups activate fewer agents; meaty questions activate more.
         _THRESHOLD = 0.1
+        # If no agent clears this absolute floor, the message is out of scope entirely.
+        _OUT_OF_SCOPE_THRESHOLD = -0.15
+        if all(score(a) < _OUT_OF_SCOPE_THRESHOLD for a in scored):
+            return []
         n_active = sum(1 for a in scored if score(a) >= _THRESHOLD)
         limit = max(1, min(n_active, 3))
 
@@ -548,10 +396,23 @@ class MeetingOrchestrator:
 
         return result
 
+    def _out_of_scope_html(self) -> str:
+        project = html.escape(self.council.project.name)
+        return (
+            '<div class="system-message" hx-swap-oob="beforeend:#transcript">'
+            f"That's outside what this council is here to advise on. "
+            f"Try asking something related to {project} — strategy, product, finances, or execution."
+            "</div>"
+        )
+
     async def queue_round(self, user_message: str, queue: asyncio.Queue[str]) -> None:
         async with self._lock:
             self.history.append({"speaker": "You", "role": "User", "content": user_message})
-            for agent in self._ordered_agents(user_message):
+            speakers = self._ordered_agents(user_message)
+            if not speakers:
+                await queue.put(self.sse_message(self._out_of_scope_html()))
+                return
+            for agent in speakers:
                 body_id = f"agent-{uuid4().hex}"
                 agent_shell = (
                     '<div class="agent-message" hx-swap-oob="beforeend:#transcript">'

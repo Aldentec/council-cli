@@ -12,12 +12,12 @@ from rich.table import Table
 
 from council.context import ContextBuilder
 from council.env_utils import load_council_env
-from council.models import CouncilFile, load_council_file, save_council_file, teams_dir
+from council.models import CouncilFile, cache_dir, load_council_file, save_council_file, teams_dir
 from council.wizard import load_template_rosters
-from council.orchestrator import AnthropicFacade
+from council.orchestrator import CouncilAI
 from council.server import create_app
 from council.tui import print_startup_summary, run_tui
-from council.wizard import add_agent_to_existing, run_init_wizard
+from council.wizard import add_agent_to_existing, run_init_wizard, run_model_wizard
 
 app = typer.Typer(help="Council: a local meeting room for AI advisors.", no_args_is_help=True)
 console = Console()
@@ -56,7 +56,7 @@ def start_server(
 
     with console.status("[#8B8680]Loading config...[/#8B8680]", spinner="dots") as status:
         council = load_council_file(config_path)
-        ai = AnthropicFacade()
+        ai = CouncilAI(council)
 
         status.update("[#8B8680]Scanning project context...[/#8B8680]")
         context_result = ContextBuilder(
@@ -66,7 +66,7 @@ def start_server(
             on_progress=lambda msg: status.update(f"[#8B8680]{msg}[/#8B8680]"),
         ).build()
 
-        status.update("[#8B8680]Checking API connection...[/#8B8680]")
+        status.update("[#8B8680]Checking connection...[/#8B8680]")
         api_status = ai.ping()
 
     if web:
@@ -89,6 +89,16 @@ def add_agent() -> None:
     console.print(f"[bold #6ABF9F]Added agent.[/bold #6ABF9F] Team now has {len(council.agents)} advisors.")
 
 
+@app.command("model")
+def set_model(
+    model_name: str | None = typer.Argument(None, help="Model name to apply to all agents immediately"),
+) -> None:
+    """Switch AI models for your advisors without re-running init."""
+    load_council_env(Path.cwd())
+    _require_config()
+    run_model_wizard(quick_model=model_name)
+
+
 @app.command()
 def list() -> None:
     """List configured agents in the current Council file."""
@@ -103,9 +113,15 @@ def list() -> None:
     console.print(table)
 
 
-@app.command("context")
-def show_context() -> None:
-    """Show which files and folders are included in the project context."""
+context_app = typer.Typer(help="Manage project context sources.", no_args_is_help=False)
+app.add_typer(context_app, name="context")
+
+
+@context_app.callback(invoke_without_command=True)
+def show_context(ctx: typer.Context) -> None:
+    """Show included files, scanned dirs, and ignore patterns. Sub-commands: add, remove, ignore, clear-cache."""
+    if ctx.invoked_subcommand is not None:
+        return
     load_council_env(Path.cwd())
     config_path = _require_config()
     council = load_council_file(config_path)
@@ -119,9 +135,10 @@ def show_context() -> None:
 
     dirs = council.context.directories or ["."]
     console.print(f"\n[bold #C9A227]Scanned directories:[/bold #C9A227] {', '.join(dirs)}")
-    ignore = council.context.ignore
-    if ignore:
-        console.print(f"[dim]Ignored patterns:[/dim] {', '.join(ignore)}")
+    if council.context.files:
+        console.print(f"[bold #C9A227]Extra files:[/bold #C9A227] {', '.join(council.context.files)}")
+    if council.context.ignore:
+        console.print(f"[dim]Ignored patterns:[/dim] {', '.join(council.context.ignore)}")
     console.print(f"[dim]Cache:[/dim] {result.cache_status}\n")
 
     if result.included_files:
@@ -139,6 +156,84 @@ def show_context() -> None:
             console.print(f"  [dim]- {f}[/dim]")
 
     console.print(f"\n[dim]Estimated tokens:[/dim] {result.tokens_estimated} / {council.context.max_tokens}")
+    console.print("[dim]Sub-commands: council context add <path>  |  remove <path>  |  ignore <pattern>  |  clear-cache[/dim]")
+
+
+@context_app.command("add")
+def context_add(
+    path: str = typer.Argument(..., help="Directory or file path to add to context"),
+) -> None:
+    """Add a directory or file to the project context."""
+    config_path = _require_config()
+    council = load_council_file(config_path)
+    resolved = Path(path)
+    if resolved.is_dir() or not resolved.suffix:
+        if path in council.context.directories:
+            console.print(f"[dim]{path} is already in context directories.[/dim]")
+            raise typer.Exit()
+        council.context.directories.append(path)
+        save_council_file(council, config_path)
+        console.print(f"[bold #6ABF9F]Added directory:[/bold #6ABF9F] {path}")
+    else:
+        if path in council.context.files:
+            console.print(f"[dim]{path} is already in context files.[/dim]")
+            raise typer.Exit()
+        council.context.files.append(path)
+        save_council_file(council, config_path)
+        console.print(f"[bold #6ABF9F]Added file:[/bold #6ABF9F] {path}")
+
+
+@context_app.command("remove")
+def context_remove(
+    path: str = typer.Argument(..., help="Directory or file path to remove from context"),
+) -> None:
+    """Remove a directory or file from the project context."""
+    config_path = _require_config()
+    council = load_council_file(config_path)
+    removed = False
+    if path in council.context.directories:
+        council.context.directories.remove(path)
+        removed = True
+    if path in council.context.files:
+        council.context.files.remove(path)
+        removed = True
+    if removed:
+        save_council_file(council, config_path)
+        console.print(f"[bold red]Removed from context:[/bold red] {path}")
+    else:
+        console.print(f"[dim]{path} not found in context directories or files.[/dim]")
+
+
+@context_app.command("ignore")
+def context_ignore(
+    pattern: str = typer.Argument(..., help="Glob pattern to ignore (e.g. 'tests/' or '*.lock')"),
+    remove: bool = typer.Option(False, "--remove", help="Remove this pattern instead of adding it"),
+) -> None:
+    """Add or remove a glob ignore pattern."""
+    config_path = _require_config()
+    council = load_council_file(config_path)
+    if remove:
+        if pattern not in council.context.ignore:
+            console.print(f"[dim]{pattern} is not in the ignore list.[/dim]")
+            raise typer.Exit()
+        council.context.ignore.remove(pattern)
+        save_council_file(council, config_path)
+        console.print(f"[bold #6ABF9F]Removed ignore pattern:[/bold #6ABF9F] {pattern}")
+    else:
+        if pattern in council.context.ignore:
+            console.print(f"[dim]{pattern} is already ignored.[/dim]")
+            raise typer.Exit()
+        council.context.ignore.append(pattern)
+        save_council_file(council, config_path)
+        console.print(f"[bold #6ABF9F]Added ignore pattern:[/bold #6ABF9F] {pattern}")
+
+
+@context_app.command("clear-cache")
+def context_clear_cache() -> None:
+    """Delete the context cache, forcing a full re-scan on next start."""
+    shutil.rmtree(cache_dir(), ignore_errors=True)
+    cache_dir()  # recreate empty
+    console.print("[bold #6ABF9F]Context cache cleared.[/bold #6ABF9F] Next [bold]council start[/bold] will re-scan.")
 
 
 @app.command("import")

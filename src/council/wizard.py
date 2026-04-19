@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import getpass
+import os
 from importlib import resources
 from pathlib import Path
 
@@ -16,13 +17,14 @@ from council.models import (
     CouncilFile,
     DEFAULT_COLORS,
     ProjectConfig,
+    ProvidersConfig,
     SettingsConfig,
     TemplateConfig,
     TemplateRoster,
     load_council_file,
     save_council_file,
 )
-from council.orchestrator import AnthropicFacade
+from council.orchestrator import CouncilAI
 
 console = Console()
 
@@ -64,10 +66,30 @@ def choose_template() -> TemplateRoster:
     return rosters[max(1, min(choice, len(rosters))) - 1]
 
 
+def _pick_provider() -> str:
+    """Ask the user which provider to default to. Defaults to ollama unless ANTHROPIC_API_KEY is set."""
+    has_anthropic_key = bool(os.getenv("ANTHROPIC_API_KEY", "").strip().strip('"').strip("'"))
+    default_choice = 2 if has_anthropic_key else 1
+
+    console.print("\n[bold #C9A227]AI Provider[/bold #C9A227]")
+    console.print("  1. [bold]Ollama[/bold] — 100% local, free, requires [dim]ollama serve[/dim]")
+    console.print("  2. [bold]Anthropic[/bold] — cloud API, requires API key")
+
+    raw = IntPrompt.ask("Choose provider", default=default_choice)
+    if raw == 2:
+        return "anthropic"
+    return "ollama"
+
+
 def ensure_env_file(path: str | Path = ".env") -> None:
     env_path = Path(path)
     if not env_path.exists():
-        env_path.write_text("ANTHROPIC_API_KEY=\n", encoding="utf-8")
+        env_path.write_text(
+            "ANTHROPIC_API_KEY=\n"
+            "OLLAMA_BASE_URL=http://localhost:11434\n"
+            "OLLAMA_DEFAULT_MODEL=llama3.2\n",
+            encoding="utf-8",
+        )
 
 
 def ensure_env_gitignored(gitignore_path: str | Path = ".gitignore") -> None:
@@ -105,6 +127,14 @@ def _pick_model(models: list[str], default: str) -> str:
             return default_choice
 
 
+def _default_model_for(provider: str, models: list[str], index: int) -> str:
+    if provider == "anthropic":
+        preferred = "claude-sonnet-4-6" if index < 2 else "claude-haiku-4-5-20251001"
+        return preferred if preferred in models else (models[0] if models else "claude-sonnet-4-6")
+    # ollama: prefer the first available model
+    return models[0] if models else "llama3.2"
+
+
 def build_agent_from_prompt(
     project_name: str,
     project_description: str,
@@ -112,15 +142,16 @@ def build_agent_from_prompt(
     default_name: str = "",
     default_role: str = "",
     default_persona: str = "",
-    ai: AnthropicFacade | None = None,
+    ai: CouncilAI | None = None,
     models: list[str] | None = None,
+    default_provider: str = "ollama",
 ) -> AgentConfig:
-    ai = ai or AnthropicFacade()
+    ai = ai or CouncilAI()
     name = Prompt.ask(f"Agent {index + 1} name", default=default_name or f"Advisor {index + 1}")
     role = Prompt.ask("Role", default=default_role or "Strategist")
     persona = Prompt.ask("Short persona", default=default_persona or "clear-eyed and direct")
-    model_default = "claude-sonnet-4-6" if index < 2 else "claude-haiku-4-5-20251001"
     available = models or ai.fetch_models()
+    model_default = _default_model_for(default_provider, available, index)
     model = _pick_model(available, model_default)
     system_prompt = ai.expand_persona(name, role, persona, project_name, project_description)
     color = DEFAULT_COLORS[index % len(DEFAULT_COLORS)]
@@ -140,7 +171,25 @@ def run_init_wizard(config_path: str | Path = "council.yaml") -> Path:
     if path.exists() and not Confirm.ask("A council.yaml already exists. Overwrite it?", default=False):
         raise SystemExit(1)
 
-    ai = AnthropicFacade()
+    default_provider = _pick_provider()
+
+    providers_cfg = ProvidersConfig(
+        default_provider=default_provider,
+        ollama_base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
+        ollama_default_model=os.getenv("OLLAMA_DEFAULT_MODEL", "llama3.2"),
+    )
+
+    # Build a temporary CouncilFile with just the providers config so CouncilAI can use it
+    tmp_council = CouncilFile(providers=providers_cfg)
+    ai = CouncilAI(tmp_council)
+
+    # Verify connectivity before proceeding
+    ok, status_msg = ai.ping()
+    color = "#6ABF9F" if ok else "bold red"
+    console.print(f"[{color}]{status_msg}[/{color}]")
+    if not ok and default_provider == "ollama":
+        console.print("[dim]Tip: run [bold]ollama serve[/bold] in another terminal, then restart council init.[/dim]")
+
     template = choose_template()
 
     project_name = Prompt.ask("Project name", default="My Startup")
@@ -173,6 +222,7 @@ def run_init_wizard(config_path: str | Path = "council.yaml") -> Path:
                 default_persona=default_agent.persona if default_agent else "",
                 ai=ai,
                 models=available_models,
+                default_provider=default_provider,
             )
         )
 
@@ -180,9 +230,16 @@ def run_init_wizard(config_path: str | Path = "council.yaml") -> Path:
     preview.add_column("Name")
     preview.add_column("Role")
     preview.add_column("Persona")
+    preview.add_column("Model")
     for agent in agents:
-        preview.add_row(agent.name, agent.role, agent.persona)
+        preview.add_row(agent.name, agent.role, agent.persona, agent.model)
     console.print(preview)
+
+    console.print(
+        f"\n[dim]Large files (over {ContextConfig().summarize_threshold} tokens) can be AI-summarized to "
+        "save context space. Useful for cloud models; less important for local.[/dim]"
+    )
+    enable_summarize = Confirm.ask("Summarize large files?", default=True)
 
     if not Confirm.ask("Write council.yaml and .env now?", default=True):
         raise SystemExit(1)
@@ -197,11 +254,13 @@ def run_init_wizard(config_path: str | Path = "council.yaml") -> Path:
         context=ContextConfig(
             directories=[item.strip() for item in directories.split(",") if item.strip()],
             files=[item.strip() for item in files.split(",") if item.strip()],
+            summarize=enable_summarize,
         ),
         author=AuthorConfig(name=author_name, github=github_handle),
         template=TemplateConfig(name=template.name, tags=template.tags),
         agents=agents,
         settings=SettingsConfig(),
+        providers=providers_cfg,
     )
     save_council_file(council, path)
     ensure_env_file()
@@ -211,15 +270,97 @@ def run_init_wizard(config_path: str | Path = "council.yaml") -> Path:
     return path
 
 
+def run_model_wizard(config_path: str | Path = "council.yaml", quick_model: str | None = None) -> CouncilFile:
+    """Interactively switch models (and optionally provider) for all agents."""
+    from council.providers import detect_provider
+
+    council = load_council_file(config_path)
+
+    # Show current state
+    table = Table(title="Current Models", header_style="bold #C9A227")
+    table.add_column("Agent")
+    table.add_column("Role")
+    table.add_column("Model")
+    table.add_column("Provider", style="dim")
+    for agent in council.agents:
+        prov = detect_provider(agent.model, agent.provider)
+        table.add_row(agent.name, agent.role, agent.model, prov)
+    console.print(table)
+
+    # Quick non-interactive path: apply a specific model to all agents
+    if quick_model:
+        for agent in council.agents:
+            agent.model = quick_model
+        _auto_update_default_provider(council, quick_model)
+        save_council_file(council, config_path)
+        console.print(f"[bold #6ABF9F]All agents updated to:[/bold #6ABF9F] {quick_model}")
+        return council
+
+    # Ask if they want to switch provider
+    current_provider = council.providers.default_provider
+    new_provider = _pick_provider_switch(current_provider)
+    if new_provider != current_provider:
+        council.providers.default_provider = new_provider
+
+    # Fetch models from the chosen provider
+    tmp_council = CouncilFile(providers=council.providers)
+    ai = CouncilAI(tmp_council)
+    ok, status_msg = ai.ping()
+    color = "#6ABF9F" if ok else "bold red"
+    console.print(f"[{color}]{status_msg}[/{color}]")
+
+    available = ai.fetch_models()
+
+    # Ask scope: same model for all, or per-agent
+    all_at_once = Confirm.ask("\nApply the same model to all agents?", default=True)
+
+    if all_at_once:
+        current_first = council.agents[0].model if council.agents else ""
+        model_default = current_first if current_first in available else available[0]
+        chosen = _pick_model(available, model_default)
+        for agent in council.agents:
+            agent.model = chosen
+        _auto_update_default_provider(council, chosen)
+    else:
+        for agent in council.agents:
+            console.print(f"\n[bold]  {agent.name}[/bold] — {agent.role}  [dim](currently {agent.model})[/dim]")
+            default = agent.model if agent.model in available else available[0]
+            agent.model = _pick_model(available, default)
+        # Update default_provider to match the majority of agents
+        providers_used = [detect_provider(a.model, a.provider) for a in council.agents]
+        majority = max(set(providers_used), key=providers_used.count)
+        council.providers.default_provider = majority
+
+    save_council_file(council, config_path)
+    console.print("[bold #6ABF9F]Models saved.[/bold #6ABF9F]")
+    return council
+
+
+def _pick_provider_switch(current: str) -> str:
+    console.print(f"\n[bold #C9A227]Provider[/bold #C9A227] [dim](current: {current})[/dim]")
+    console.print("  1. Ollama — local, free")
+    console.print("  2. Anthropic — cloud API")
+    default = 2 if current == "anthropic" else 1
+    raw = IntPrompt.ask("Provider", default=default)
+    return "anthropic" if raw == 2 else "ollama"
+
+
+def _auto_update_default_provider(council: CouncilFile, model: str) -> None:
+    from council.providers import detect_provider
+    council.providers.default_provider = detect_provider(model)
+
+
 def add_agent_to_existing(config_path: str | Path = "council.yaml") -> CouncilFile:
     council = load_council_file(config_path)
-    ai = AnthropicFacade()
+    ai = CouncilAI(council)
+    available = ai.fetch_models()
     agent = build_agent_from_prompt(
         project_name=council.project.name,
         project_description=council.project.description,
         index=len(council.agents),
         ai=ai,
-        models=ai.fetch_models(),
+        models=available,
+        default_provider=council.providers.default_provider,
     )
     council.agents.append(agent)
     save_council_file(council, config_path)

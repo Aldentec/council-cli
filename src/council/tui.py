@@ -7,7 +7,7 @@ from rich.table import Table
 
 from council.context import ContextBuildResult
 from council.models import CouncilFile
-from council.orchestrator import AnthropicFacade, MeetingOrchestrator
+from council.orchestrator import CouncilAI, MeetingOrchestrator
 
 console = Console()
 
@@ -45,7 +45,7 @@ def print_startup_summary(
 
 
 def run_tui(council: CouncilFile, result: ContextBuildResult, api_status: tuple[bool, str] | None = None) -> None:
-    ai = AnthropicFacade()
+    ai = CouncilAI(council)
     orchestrator = MeetingOrchestrator(council, result.content, ai)
 
     print_startup_summary(council, result, mode="TUI", api_status=api_status)
@@ -90,7 +90,7 @@ def run_tui(council: CouncilFile, result: ContextBuildResult, api_status: tuple[
                 console.print(token, end="", style=agent.color, highlight=False, soft_wrap=True)
             console.print("")
             if ai.last_error and not warned_about_fallback:
-                console.print("[#8B8680]Anthropic request failed, so Council is using local fallback voices for this session.[/#8B8680]")
+                console.print("[#8B8680]AI request failed — Council is using built-in fallback voices for this session.[/#8B8680]")
                 warned_about_fallback = True
             orchestrator.history.append(
                 {

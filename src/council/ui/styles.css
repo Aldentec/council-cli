@@ -133,6 +133,18 @@ h1, h2 {
     color: var(--text);
 }
 
+.system-message {
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--muted, #888);
+    font-size: 0.85rem;
+    font-style: italic;
+    margin: 8px 0 16px;
+    padding: 10px 16px;
+    text-align: center;
+}
+
 .agent-divider {
     height: 1px;
     background: linear-gradient(90deg, transparent, var(--gold), transparent);

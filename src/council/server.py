@@ -11,7 +11,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from council.context import ContextBuildResult
 from council.models import CouncilFile
-from council.orchestrator import AnthropicFacade, MeetingOrchestrator
+from council.orchestrator import CouncilAI, MeetingOrchestrator
 
 UI_DIR = Path(__file__).resolve().parent / "ui"
 TEMPLATES = Environment(
@@ -23,7 +23,7 @@ TEMPLATES = Environment(
 def create_app(council: CouncilFile, context_result: ContextBuildResult) -> FastAPI:
     app = FastAPI(title="Council", version="0.1.0")
     queue: asyncio.Queue[str] = asyncio.Queue()
-    orchestrator = MeetingOrchestrator(council, context_result.content, AnthropicFacade())
+    orchestrator = MeetingOrchestrator(council, context_result.content, CouncilAI(council))
 
     app.state.council = council
     app.state.context_result = context_result

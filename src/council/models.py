@@ -30,6 +30,7 @@ class ContextConfig(BaseModel):
     ignore: list[str] = Field(default_factory=lambda: list(DEFAULT_IGNORES))
     max_tokens: int = 6000
     summarize_threshold: int = 800
+    summarize: bool = True
 
     @field_validator("directories", "files", "ignore", mode="before")
     @classmethod
@@ -58,7 +59,8 @@ class AgentConfig(BaseModel):
     role: str
     persona: str
     system_prompt: str
-    model: str = "claude-sonnet-4-5"
+    model: str = "llama3.2"
+    provider: str | None = None  # None = auto-detect: claude-* → anthropic, else → ollama
     color: str = "#C9A227"
 
 
@@ -69,6 +71,12 @@ class SettingsConfig(BaseModel):
     conversation_style: Literal["collaborative", "debate", "socratic"] = "collaborative"
 
 
+class ProvidersConfig(BaseModel):
+    default_provider: str = "ollama"
+    ollama_base_url: str = "http://localhost:11434"
+    ollama_default_model: str = "llama3.2"
+
+
 class CouncilFile(BaseModel):
     council_version: str = "1.0.0"
     project: ProjectConfig = Field(default_factory=ProjectConfig)
@@ -77,6 +85,7 @@ class CouncilFile(BaseModel):
     template: TemplateConfig = Field(default_factory=TemplateConfig)
     agents: list[AgentConfig] = Field(default_factory=list)
     settings: SettingsConfig = Field(default_factory=SettingsConfig)
+    providers: ProvidersConfig = Field(default_factory=ProvidersConfig)
 
     def assign_missing_colors(self) -> None:
         for index, agent in enumerate(self.agents):

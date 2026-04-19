@@ -70,6 +70,9 @@ class ContextBuilder:
     def build(self) -> ContextBuildResult:
         gathered = self._gather_files()
         digest = hashlib.md5()
+        # Include summarizer identity so switching providers/models busts the cache
+        summarizer_id = f"{self.council.providers.default_provider}:{self.council.providers.ollama_default_model}"
+        digest.update(summarizer_id.encode("utf-8"))
         for path, content in gathered:
             digest.update(self._display_path(path).encode("utf-8"))
             digest.update(content.encode("utf-8", errors="ignore"))
@@ -98,7 +101,10 @@ class ContextBuilder:
                 self.on_progress(f"Scanning project context... ({i}/{total}) {display_path}")
             rendered = content
             summarized = False
-            if self.estimate_tokens(content) > self.council.context.summarize_threshold:
+            if (
+                self.council.context.summarize
+                and self.estimate_tokens(content) > self.council.context.summarize_threshold
+            ):
                 if self.on_progress:
                     self.on_progress(f"Summarizing ({i}/{total}) {display_path}")
                 rendered = self.summarizer(display_path, content)
