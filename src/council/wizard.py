@@ -4,7 +4,6 @@ import getpass
 from importlib import resources
 from pathlib import Path
 
-import questionary
 import yaml
 from rich.console import Console
 from rich.prompt import Confirm, IntPrompt, Prompt
@@ -82,17 +81,28 @@ def ensure_env_gitignored(gitignore_path: str | Path = ".gitignore") -> None:
 
 def _pick_model(models: list[str], default: str) -> str:
     default_choice = default if default in models else models[0]
-    result = questionary.select(
-        "Model",
-        choices=models,
-        default=default_choice,
-        style=questionary.Style([
-            ("selected", "fg:#C9A227 bold"),
-            ("pointer", "fg:#C9A227 bold"),
-            ("highlighted", "fg:#C9A227"),
-        ]),
-    ).ask()
-    return result or default_choice
+    try:
+        import questionary
+        result = questionary.select(
+            "Model",
+            choices=models,
+            default=default_choice,
+            style=questionary.Style([
+                ("selected", "fg:#C9A227 bold"),
+                ("pointer", "fg:#C9A227 bold"),
+                ("highlighted", "fg:#C9A227"),
+            ]),
+        ).ask()
+        return result or default_choice
+    except ImportError:
+        for idx, m in enumerate(models, 1):
+            marker = " (default)" if m == default_choice else ""
+            console.print(f"  {idx}. {m}{marker}")
+        raw = Prompt.ask("Model number", default=str(models.index(default_choice) + 1))
+        try:
+            return models[int(raw) - 1]
+        except (ValueError, IndexError):
+            return default_choice
 
 
 def build_agent_from_prompt(
