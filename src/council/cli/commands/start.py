@@ -55,9 +55,11 @@ def start_server(
 
         # Append past-session memory block if enabled
         past_block = ""
+        meeting_number = 1
         if council.settings.persist_sessions:
             status.update("[#8B8680]Loading past sessions...[/#8B8680]")
-            past_block = build_past_sessions_block(council, cwd, summarizer=service.summarize_file)
+            past_block, prior_meeting_count = build_past_sessions_block(council, cwd, summarizer=service.summarize_file)
+            meeting_number = prior_meeting_count + 1
 
         status.update("[#8B8680]Checking connection...[/#8B8680]")
         api_status = service.ping()
@@ -65,6 +67,15 @@ def start_server(
     if past_block:
         context_result.content = context_result.content.rstrip() + "\n\n" + past_block
         console.print(f"[dim]Loaded {council.settings.max_sessions_loaded} past session(s) into context.[/dim]")
+
+    if council.settings.persist_sessions:
+        memory_line = (
+            "## Team Memory\n"
+            f"This is team meeting #{meeting_number}. "
+            "On early meetings, ask clarifying questions and avoid pretending prior product familiarity. "
+            "As meeting count grows, build on validated historical decisions and act as deeper product experts."
+        )
+        context_result.content = context_result.content.rstrip() + "\n\n" + memory_line
 
     if web:
         print_startup_summary(council, context_result, mode="Web", api_status=api_status)

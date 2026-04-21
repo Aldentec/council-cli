@@ -1,30 +1,38 @@
 from __future__ import annotations
 
 from council.domain.models.config import CouncilFile
-from council.infrastructure.sessions.store import SavedSession, SessionStore
+from council.infrastructure.sessions.store import SavedSession, SessionStore, canonical_team_signature
 
 
 def build_past_sessions_block(
     council: CouncilFile,
     workspace_path,
     summarizer: object | None = None,
-) -> str:
+) -> tuple[str, int]:
     """
     Load recent saved sessions and return a context block injected into the
     project briefing. Uses the LLM-generated summary when available; falls back
     to a compact transcript excerpt so the block is never empty.
     """
     if not council.settings.persist_sessions:
-        return ""
+        return "", 0
 
+    team_id = canonical_team_signature(council.project.name, council.agents)
     store = SessionStore(workspace_path)
-    sessions = store.list_recent(limit=council.settings.max_sessions_loaded)
+    sessions = [
+        s
+        for s in store.list_recent(limit=max(council.settings.max_sessions_loaded * 5, 25))
+        if s.team_id == team_id
+    ][: council.settings.max_sessions_loaded]
     if not sessions:
-        return ""
+        return "", 0
 
     parts: list[str] = []
+    highest_meeting_number = 0
     for s in sessions:
-        header = f"### Session {s.started_at} ({s.turn_count} turns)"
+        highest_meeting_number = max(highest_meeting_number, s.team_meeting_number)
+        meeting_number = s.team_meeting_number if s.team_meeting_number > 0 else "Unknown"
+        header = f"### Team Meeting #{meeting_number} — {s.started_at} ({s.turn_count} turns)"
         if s.summary:
             parts.append(f"{header}\n{s.summary.strip()}")
         else:
@@ -46,12 +54,12 @@ def build_past_sessions_block(
                 parts.append(f"{header}\n{raw}")
 
     if not parts:
-        return ""
+        return "", highest_meeting_number
 
-    return "## Past Sessions\n\n" + "\n\n".join(parts)
+    return "## Past Sessions\n\n" + "\n\n".join(parts), highest_meeting_number
 
 
-def _transcript_excerpt(history: list[dict], max_entries: int = 10) -> str:
+def _transcript_excerpt(history: list[dict], max_entries: int = 10) -> tuple[str, int]:
     lines: list[str] = []
     for item in history[-max_entries:]:
         speaker = item.get("speaker", "?")

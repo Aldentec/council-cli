@@ -151,7 +151,9 @@ def run_init_wizard(config_path: str | Path = "council.yaml") -> Path:
 
     console.print(
         "\n[dim]Session memory saves each meeting to [bold].council/sessions/[/bold] so future sessions "
-        "remember past decisions. Each session is summarized before being injected into context.[/dim]"
+        "remember past decisions and track how many times this team has met. "
+        "When enabled, first meetings behave as new introductions and later meetings build long-term team memory. "
+        "Each session is summarized before being injected into context.[/dim]"
     )
     enable_sessions = Confirm.ask("Enable session memory?", default=False)
 

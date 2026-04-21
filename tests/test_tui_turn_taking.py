@@ -29,3 +29,11 @@ def test_general_prompt_keeps_full_room_in_rotation():
     ordered = session._ordered_agents("What does everyone think about iOS vs Android?")
 
     assert [agent.name for agent in ordered] == ["Alex", "Jordan", "Sam", "Morgan"]
+
+
+def test_history_question_summons_full_room():
+    session = MeetingSession(_council(), "briefing")
+
+    ordered = session._ordered_agents("What did we talk about last time?")
+
+    assert set(agent.name for agent in ordered) == {"Alex", "Jordan", "Sam", "Morgan"}

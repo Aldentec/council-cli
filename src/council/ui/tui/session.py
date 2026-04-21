@@ -11,7 +11,7 @@ from council.application.council_service import CouncilService
 from council.application.meeting_session import MeetingSession
 from council.domain.models.config import CouncilFile
 from council.infrastructure.context.cache import ContextBuildResult
-from council.infrastructure.sessions.store import SavedSession, SessionStore, new_session_id
+from council.infrastructure.sessions.store import SavedSession, SessionStore, canonical_team_signature
 from council.ui.tui.display import print_startup_summary
 
 console = Console()
@@ -41,11 +41,21 @@ def _save_session(
         except Exception:
             pass
 
+    # Cache team identification across multiple saves during the same session
+    if not hasattr(session, "_team_cache"):
+        team_id = canonical_team_signature(council.project.name, council.agents)
+        team_meeting_number = SessionStore(workspace).next_team_meeting_number(team_id)
+        session._team_cache = (team_id, team_meeting_number)
+    else:
+        team_id, team_meeting_number = session._team_cache
+
     saved = SavedSession(
         session_id=session.session_id,
         started_at=session.started_at,
         project_name=council.project.name,
         history=session.history,
+        team_id=team_id,
+        team_meeting_number=team_meeting_number,
         summary=summary,
         turn_count=len(user_turns),
     )
@@ -74,7 +84,7 @@ def run_tui(
     for agent in council.agents:
         roster.add_row(agent.name, agent.role, agent.persona)
     console.print(roster)
-    console.print("[bold #C9A227]Commands:[/bold #C9A227] /end for summary, /quit to leave")
+    console.print("[bold #C9A227]Commands:[/bold #C9A227] /end for summary, /export to save transcript, /quit to leave")
 
     warned_about_fallback = False
 
@@ -98,6 +108,10 @@ def run_tui(
             console.print(Markdown(summary_text))
             _save_session(council, session, service, cwd, with_summary=True)
             break
+        if message.lower() == "/export":
+            _save_session(council, session, service, cwd, with_summary=False)
+            console.print("[dim]Transcript exported.[/dim]")
+            continue
 
         console.print(Panel.fit(message, title="You", border_style="#C9A227"))
         session.history.append({"speaker": "You", "role": "User", "content": message})

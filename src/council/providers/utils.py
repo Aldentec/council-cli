@@ -15,6 +15,14 @@ def history_to_text(history: list[dict]) -> str:
 
 
 def build_system_prompt(agent: AgentConfig, council: CouncilFile, shared_context: str) -> str:
+    # Detect whether historical memory is present in the context
+    has_memory = "## Past Sessions" in shared_context or "## Team Memory" in shared_context
+    memory_instruction = (
+        "When the user asks about earlier meetings ('last time', 'previously', 'what did we talk about', 'did we decide'), "
+        "consult the 'Past Sessions' section above and answer concisely with specific references. "
+        "You may cite the meeting number if available.\n\n"
+    ) if has_memory else ""
+
     return (
         f"{agent.system_prompt}\n\n"
         f"Conversation style: {council.settings.conversation_style}. "
@@ -23,6 +31,7 @@ def build_system_prompt(agent: AgentConfig, council: CouncilFile, shared_context
         "Plain spoken sentences only. Make one concrete point and stop. "
         "If the user's message contains an obvious typo or misspelling, silently interpret "
         "the intended word and respond to the meaning — never comment on or correct the typo.\n\n"
+        f"{memory_instruction}"
         "## Project Briefing\n"
         f"{shared_context}"
     )

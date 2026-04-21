@@ -39,7 +39,13 @@ _STOP_WORDS = frozenset({
     "my", "their", "us", "me", "him", "her", "just", "so", "if", "as",
 })
 
-ALL_ROOM_CUES = ["everyone", "everybody", "all of you", "whole room", "all advisors"]
+ALL_ROOM_CUES = [
+    "everyone", "everybody", "all of you", "whole room", "all advisors",
+    # History-oriented questions — summon the room to consult past sessions
+    "last time", "previously", "earlier", "what did we discuss", "what did we talk about",
+    "past meeting", "previous meeting", "did we decide", "did we agree", "did we say",
+    "what were our decisions", "open questions", "action items",
+]
 DIRECT_CUES = ["what do you think", "thoughts", "do you agree", "weigh in", "tell me", "your take", "your view"]
 FOLLOWUP_CUES = [
     "elaborate", "explain", "what do you mean", "tell me more", "go on",

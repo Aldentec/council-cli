@@ -13,7 +13,7 @@ from council.application.council_service import CouncilService
 from council.application.meeting_session import MeetingSession
 from council.domain.models.config import CouncilFile
 from council.infrastructure.context.cache import ContextBuildResult
-from council.infrastructure.sessions.store import SavedSession, SessionStore
+from council.infrastructure.sessions.store import SavedSession, SessionStore, canonical_team_signature
 
 # council/ui/ — where index.html and styles.css live
 UI_DIR = Path(__file__).resolve().parent.parent
@@ -79,15 +79,19 @@ def create_app(
         if council.settings.persist_sessions and session.history:
             user_turns = [h for h in session.history if h.get("speaker") == "You"]
             if user_turns:
+                team_id = canonical_team_signature(council.project.name, council.agents)
+                store = SessionStore(cwd)
                 saved = SavedSession(
                     session_id=session.session_id,
                     started_at=session.started_at,
                     project_name=council.project.name,
                     history=session.history,
+                    team_id=team_id,
+                    team_meeting_number=store.next_team_meeting_number(team_id),
                     summary=summary_markdown,
                     turn_count=len(user_turns),
                 )
-                SessionStore(cwd).save(saved)
+                store.save(saved)
         summary_html = markdown.markdown(summary_markdown, extensions=["extra", "tables", "sane_lists"])
         card = (
             '<section class="summary-card">'

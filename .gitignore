@@ -11,3 +11,4 @@ build/
 .cache/
 .history/
 council.yaml
+.council/
