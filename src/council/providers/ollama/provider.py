@@ -6,6 +6,7 @@ from typing import Generator
 
 import httpx
 
+from council.application.decision_ledger import DecisionLedger
 from council.domain.models.agent import AgentConfig
 from council.domain.models.config import CouncilFile
 from council.providers.utils import build_system_prompt, fallback_meeting_summary, history_to_text
@@ -103,8 +104,9 @@ class OllamaProvider:
         council: CouncilFile,
         shared_context: str,
         history: list[dict],
+        decision_ledger: DecisionLedger | None = None,
     ) -> Generator[str, None, None]:
-        system = build_system_prompt(agent, council, shared_context)
+        system = build_system_prompt(agent, council, shared_context, decision_ledger=decision_ledger)
         transcript = history_to_text(history)
         latest_user = next(
             (item["content"] for item in reversed(history) if item.get("speaker") == "You"), ""

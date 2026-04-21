@@ -8,6 +8,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from council.application.council_service import CouncilService
+from council.application.decision_ledger import coordinator_state, detect_contradictions, parse_revision
 from council.application.meeting_session import MeetingSession
 from council.domain.models.config import CouncilFile
 from council.infrastructure.context.cache import ContextBuildResult
@@ -58,6 +59,7 @@ def _save_session(
         team_meeting_number=team_meeting_number,
         summary=summary,
         turn_count=len(user_turns),
+        decision_ledger=session.decision_ledger.to_dict(),
     )
     SessionStore(workspace).save(saved)
     if with_summary:
@@ -114,12 +116,22 @@ def run_tui(
             continue
 
         console.print(Panel.fit(message, title="You", border_style="#C9A227"))
+        session._extract_decision_from_user(message)
         session.history.append({"speaker": "You", "role": "User", "content": message})
 
+        revisions = []
+        contradictions = []
         for agent in session._ordered_agents(message):
             console.print(f"\n[bold {agent.color}]{agent.name}[/bold {agent.color}] [#8B8680]— {agent.role}[/#8B8680]")
             full_response = ""
-            for token in service.stream_reply(agent, council, result.content, session.history):
+            prompt_history = session._history_with_coordinator(revisions, contradictions)
+            for token in service.stream_reply(
+                agent,
+                council,
+                result.content,
+                prompt_history,
+                decision_ledger=session.decision_ledger,
+            ):
                 full_response += token
                 console.print(token, end="", style=agent.color, highlight=False, soft_wrap=True)
             console.print("")
@@ -128,6 +140,19 @@ def run_tui(
                     "[#8B8680]AI request failed — Council is using built-in fallback voices for this session.[/#8B8680]"
                 )
                 warned_about_fallback = True
+
+            parsed_revision = parse_revision(full_response)
+            if parsed_revision:
+                revisions.append(parsed_revision)
+
+            contradictions.extend(
+                detect_contradictions(
+                    session.decision_ledger,
+                    agent.name,
+                    full_response,
+                )
+            )
+
             session.history.append(
                 {
                     "speaker": agent.name,
@@ -135,3 +160,9 @@ def run_tui(
                     "content": full_response.strip(),
                 }
             )
+
+        if revisions or contradictions or session._wants_state_summary(message):
+            coordinator = coordinator_state(session.decision_ledger, revisions, contradictions)
+            console.print(f"\n[dim]{coordinator}[/dim]")
+            session.history.append({"speaker": "Coordinator", "role": "Moderator", "content": coordinator})
+

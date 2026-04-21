@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from typing import Generator
 
+from council.application.decision_ledger import DecisionLedger
 from council.domain.models.agent import AgentConfig
 from council.domain.models.config import CouncilFile, ProvidersConfig
 from council.providers.base import LLMProvider
@@ -61,12 +62,19 @@ class CouncilService:
         council: CouncilFile,
         shared_context: str,
         history: list[dict],
+        decision_ledger: DecisionLedger | None = None,
     ) -> Generator[str, None, None]:
         provider = self._provider_for_agent(agent)
         self.last_error = None
         try:
             self.last_mode = provider.provider_name
-            yield from provider.stream_reply(agent, council, shared_context, history)
+            yield from provider.stream_reply(
+                agent,
+                council,
+                shared_context,
+                history,
+                decision_ledger=decision_ledger,
+            )
         except Exception as exc:
             self.last_error = f"{type(exc).__name__}: {exc}"
             self.last_mode = "mock"

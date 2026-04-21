@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from council.application.decision_ledger import DecisionLedger
 from council.domain.models.agent import AgentConfig
 from council.domain.models.config import CouncilFile
 
@@ -14,7 +15,12 @@ def history_to_text(history: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def build_system_prompt(agent: AgentConfig, council: CouncilFile, shared_context: str) -> str:
+def build_system_prompt(
+    agent: AgentConfig,
+    council: CouncilFile,
+    shared_context: str,
+    decision_ledger: DecisionLedger | None = None,
+) -> str:
     # Detect whether historical memory is present in the context
     has_memory = "## Past Sessions" in shared_context or "## Team Memory" in shared_context
     memory_instruction = (
@@ -23,15 +29,23 @@ def build_system_prompt(agent: AgentConfig, council: CouncilFile, shared_context
         "You may cite the meeting number if available.\n\n"
     ) if has_memory else ""
 
+    ledger_block = decision_ledger.render_for_prompt() if decision_ledger else "(none yet)"
+
     return (
         f"{agent.system_prompt}\n\n"
+        "Panel policy: Treat confirmed decisions in the Decision Ledger as binding unless explicitly revised. "
+        "Never contradict a ledger item without labeling it exactly as PROPOSED REVISION and including Topic, Suggestion, "
+        "Reason, Risk, Trigger, and Approver fields. Distinguish decisions vs options vs open questions. "
+        "State Position as Support, Challenge, or Revise and include ledger references.\n\n"
         f"Conversation style: {council.settings.conversation_style}. "
         "You are in a live meeting. Speak in 2-3 sentences only — never more. "
-        "No bullet points, no numbered lists, no bold headers, no section titles. "
+        "No bullet points, no numbered lists, no bold headers, no section titles unless using PROPOSED REVISION format. "
         "Plain spoken sentences only. Make one concrete point and stop. "
         "If the user's message contains an obvious typo or misspelling, silently interpret "
         "the intended word and respond to the meaning — never comment on or correct the typo.\n\n"
         f"{memory_instruction}"
+        "## Decision Ledger\n"
+        f"{ledger_block}\n\n"
         "## Project Briefing\n"
         f"{shared_context}"
     )

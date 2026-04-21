@@ -90,6 +90,7 @@ def create_app(
                     team_meeting_number=store.next_team_meeting_number(team_id),
                     summary=summary_markdown,
                     turn_count=len(user_turns),
+                    decision_ledger=session.decision_ledger.to_dict(),
                 )
                 store.save(saved)
         summary_html = markdown.markdown(summary_markdown, extensions=["extra", "tables", "sane_lists"])

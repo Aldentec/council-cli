@@ -20,6 +20,7 @@ class SavedSession:
     team_meeting_number: int = 0
     summary: str = ""                  # LLM-generated summary, filled after /end
     turn_count: int = 0
+    decision_ledger: dict = None
 
 
 def sessions_dir(workspace: Path) -> Path:
@@ -53,6 +54,7 @@ class SessionStore:
             "turn_count": session.turn_count,
             "summary": session.summary,
             "history": session.history,
+            "decision_ledger": session.decision_ledger or {"decisions": []},
         }
         path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
         return path
@@ -64,6 +66,7 @@ class SessionStore:
         data = json.loads(path.read_text(encoding="utf-8"))
         data.setdefault("team_id", "")
         data.setdefault("team_meeting_number", 0)
+        data.setdefault("decision_ledger", {"decisions": []})
         return SavedSession(**data)
 
     def list_recent(self, limit: int = 5) -> list[SavedSession]:
@@ -74,6 +77,7 @@ class SessionStore:
                 data = json.loads(f.read_text(encoding="utf-8"))
                 data.setdefault("team_id", "")
                 data.setdefault("team_meeting_number", 0)
+                data.setdefault("decision_ledger", {"decisions": []})
                 sessions.append(SavedSession(**data))
             except Exception:
                 continue

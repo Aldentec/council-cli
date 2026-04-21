@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Generator, Protocol, runtime_checkable
 
+from council.application.decision_ledger import DecisionLedger
 from council.domain.models.agent import AgentConfig
 from council.domain.models.config import CouncilFile
 
@@ -30,6 +31,7 @@ class LLMProvider(Protocol):
         council: CouncilFile,
         shared_context: str,
         history: list[dict],
+        decision_ledger: DecisionLedger | None = None,
     ) -> Generator[str, None, None]: ...
 
     def summarize_meeting(self, council: CouncilFile, history: list[dict]) -> str: ...
